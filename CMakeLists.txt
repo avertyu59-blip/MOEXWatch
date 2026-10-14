@@ -1,0 +1,32 @@
+cmake_minimum_required(VERSION 3.20)
+project(MOEXWatch VERSION 0.3.0 LANGUAGES CXX)
+
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+
+add_library(market_core src/market_core.cpp)
+target_include_directories(market_core PUBLIC include)
+
+if(MSVC)
+  target_compile_options(market_core PRIVATE /W4 /permissive- /utf-8)
+else()
+  target_compile_options(market_core PRIVATE -Wall -Wextra -Wpedantic -Wconversion)
+endif()
+
+if(WIN32)
+  add_executable(moexwatch WIN32 src/main.cpp)
+  target_link_libraries(moexwatch PRIVATE market_core winhttp comctl32 gdi32 user32 shell32)
+  target_compile_definitions(moexwatch PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX)
+  if(MSVC)
+    target_compile_options(moexwatch PRIVATE /W4 /permissive- /utf-8)
+  endif()
+else()
+  add_executable(moexwatch src/main.cpp)
+  target_link_libraries(moexwatch PRIVATE market_core)
+endif()
+
+enable_testing()
+add_executable(market_core_tests tests/market_core_tests.cpp)
+target_link_libraries(market_core_tests PRIVATE market_core)
+add_test(NAME market_core_tests COMMAND market_core_tests)
