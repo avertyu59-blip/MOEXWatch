@@ -68,6 +68,8 @@ int main() {
           "portfolio counts an open priced position");
     check(portfolio && portfolio->positions.size() == 1 && std::abs(portfolio->positions[0].quantity - 7.0) < 1e-9,
           "portfolio chronologically applies buys and partial sale");
+    check(portfolio && portfolio->positions[0].opened_on == "2026-02-01",
+          "open position identity starts on the first buy");
     check(portfolio && std::abs(portfolio->positions[0].average_entry_price - 260.6) < 1e-9,
           "weighted average cost includes buy commissions");
     check(portfolio && std::abs(portfolio->positions[0].unrealized_profit.value_or(0.0) - 65.8) < 1e-9,
@@ -81,6 +83,22 @@ int main() {
           "portfolio rejects sale before shares are owned");
     check(!valid_portfolio_transaction(PortfolioTransaction{"2026-02-30","SBER",PortfolioSide::Buy,1.0,100.0,0.0}),
           "portfolio validates calendar dates");
+    const PositionLevels configured_levels{"SBER","2026-02-01",240.0,340.0};
+    check(valid_position_levels(configured_levels), "position levels accept valid positive prices");
+    check(!valid_position_levels(PositionLevels{"SBER","2026-02-01",0.0,340.0}),
+          "position levels reject non-positive prices");
+    check(!valid_position_levels(PositionLevels{"SBER","2026-02-30",240.0,340.0}),
+          "position levels validate opening date");
+    const std::vector<PortfolioTransaction> position_lifecycle{
+        {"2026-03-01","SBER",PortfolioSide::Buy,2.0,100.0,0.0},
+        {"2026-03-03","SBER",PortfolioSide::Buy,1.0,110.0,0.0},
+        {"2026-03-04","SBER",PortfolioSide::Sell,1.0,120.0,0.0},
+        {"2026-03-05","SBER",PortfolioSide::Sell,2.0,120.0,0.0},
+        {"2026-03-06","SBER",PortfolioSide::Buy,4.0,130.0,0.0}};
+    const auto reopened = calculate_portfolio(position_lifecycle, {});
+    check(reopened && reopened->positions[0].quantity == 4.0 &&
+          reopened->positions[0].opened_on == "2026-03-06",
+          "full close and later buy starts a new position identity");
     const auto unpriced_portfolio = calculate_portfolio({{"2026-02-01","GAZP",PortfolioSide::Buy,2.0,100.0,1.0}},{});
     check(unpriced_portfolio && unpriced_portfolio->open_positions == 1 && unpriced_portfolio->priced_positions == 0 &&
           !unpriced_portfolio->positions[0].market_value,

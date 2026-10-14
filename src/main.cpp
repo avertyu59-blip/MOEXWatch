@@ -45,7 +45,8 @@ constexpr int ID_TABS = 1010, ID_TRADE_TICKER = 1011, ID_TRADE_QUANTITY = 1012,
               ID_PORT_DATE = 1040, ID_PORT_TICKER = 1041, ID_PORT_SIDE = 1042,
               ID_PORT_QUANTITY = 1043, ID_PORT_PRICE = 1044, ID_PORT_COMMISSION = 1045,
               ID_PORT_ADD = 1046, ID_PORT_DELETE = 1047, ID_PORT_POSITIONS = 1048,
-              ID_PORT_TRANSACTIONS = 1049, ID_PORT_SUMMARY = 1050;
+              ID_PORT_TRANSACTIONS = 1049, ID_PORT_SUMMARY = 1050,
+              ID_POSITION_STOP = 1051, ID_POSITION_TAKE = 1052, ID_POSITION_LEVELS_SAVE = 1053;
 constexpr UINT_PTR TIMER_AUTO_REFRESH = 1;
 
 struct Instrument {
@@ -95,6 +96,9 @@ HWND g_port_delete{};
 HWND g_port_positions{};
 HWND g_port_transactions_list{};
 HWND g_port_summary{};
+HWND g_position_stop{};
+HWND g_position_take{};
+HWND g_position_levels_save{};
 HFONT g_font{};
 std::vector<Instrument> g_items;
 std::atomic<bool> g_busy{false};
@@ -115,6 +119,7 @@ std::vector<HWND> g_portfolio_controls;
 std::vector<HWND> g_global_controls;
 std::vector<Trade> g_trades;
 std::vector<PortfolioTransaction> g_portfolio_transactions;
+std::vector<PositionLevels> g_position_levels;
 SignalSettings g_signal_settings;
 std::unordered_map<std::string, bool> g_previous_signal_matches;
 bool g_signal_baseline_ready = false;
@@ -192,6 +197,20 @@ std::filesystem::path portfolio_path() {
     std::error_code ec;
     std::filesystem::create_directories(folder, ec);
     return folder / L"portfolio_transactions.csv";
+}
+
+std::filesystem::path position_levels_path() {
+    const DWORD required = GetEnvironmentVariableW(L"APPDATA", nullptr, 0);
+    std::wstring appdata;
+    if (required > 1) {
+        appdata.resize(required);
+        const DWORD written = GetEnvironmentVariableW(L"APPDATA", appdata.data(), required);
+        if (written > 0 && written < required) appdata.resize(written); else appdata.clear();
+    }
+    const std::filesystem::path folder = (appdata.empty() ? std::filesystem::path(L".") : std::filesystem::path(appdata)) / L"MOEXWatch";
+    std::error_code ec;
+    std::filesystem::create_directories(folder, ec);
+    return folder / L"position_levels.csv";
 }
 
 std::filesystem::path signals_path() {
@@ -341,6 +360,36 @@ void load_portfolio() {
     }
     std::stable_sort(g_portfolio_transactions.begin(), g_portfolio_transactions.end(),
         [](const auto& a, const auto& b) { return a.date < b.date; });
+}
+
+void save_position_levels() {
+    std::ofstream out(position_levels_path(), std::ios::binary | std::ios::trunc);
+    if (!out) return;
+    out << "ticker;opened_on;stop_loss;take_profit\n" << std::setprecision(15);
+    for (const auto& levels : g_position_levels) {
+        if (!valid_position_levels(levels) || (!levels.stop_loss && !levels.take_profit)) continue;
+        out << levels.ticker << ';' << levels.opened_on << ';';
+        if (levels.stop_loss) out << *levels.stop_loss;
+        out << ';';
+        if (levels.take_profit) out << *levels.take_profit;
+        out << '\n';
+    }
+}
+
+void load_position_levels() {
+    std::ifstream in(position_levels_path(), std::ios::binary);
+    if (!in) return;
+    const std::string content((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    const auto rows = parse_csv(content);
+    if (rows.empty() || rows.front().size() < 4 || rows.front()[0] != "ticker") return;
+    for (std::size_t i = 1; i < rows.size(); ++i) {
+        if (rows[i].size() < 4) continue;
+        const auto stop = rows[i][2].empty() ? std::optional<double>{} : parse_finite_number(rows[i][2]);
+        const auto take = rows[i][3].empty() ? std::optional<double>{} : parse_finite_number(rows[i][3]);
+        if ((!rows[i][2].empty() && !stop) || (!rows[i][3].empty() && !take)) continue;
+        PositionLevels levels{rows[i][0], rows[i][1], stop, take};
+        if (valid_position_levels(levels)) g_position_levels.push_back(std::move(levels));
+    }
 }
 
 std::string optional_number(std::optional<double> n) {
@@ -614,6 +663,22 @@ std::vector<Quote> portfolio_quotes() {
     return quotes;
 }
 
+const PositionLevels* levels_for_position(std::string_view ticker, std::string_view opened_on) {
+    const auto found = std::find_if(g_position_levels.begin(), g_position_levels.end(), [&](const auto& levels) {
+        return levels.ticker == ticker && levels.opened_on == opened_on;
+    });
+    return found == g_position_levels.end() ? nullptr : &*found;
+}
+
+std::optional<PortfolioPosition> open_position_for_ticker(std::string_view ticker) {
+    const auto portfolio = calculate_portfolio(g_portfolio_transactions, {});
+    if (!portfolio) return std::nullopt;
+    const auto found = std::find_if(portfolio->positions.begin(), portfolio->positions.end(), [&](const auto& position) {
+        return position.ticker == ticker && position.quantity > 0.0;
+    });
+    return found == portfolio->positions.end() ? std::nullopt : std::optional<PortfolioPosition>(*found);
+}
+
 std::string portfolio_side_name(PortfolioSide side) {
     return side == PortfolioSide::Buy ? "Покупка" : "Продажа";
 }
@@ -623,6 +688,15 @@ void fill_portfolio() {
     ListView_DeleteAllItems(g_port_positions);
     ListView_DeleteAllItems(g_port_transactions_list);
     const auto portfolio = calculate_portfolio(g_portfolio_transactions, portfolio_quotes());
+    if (portfolio) {
+        const auto old_size = g_position_levels.size();
+        std::erase_if(g_position_levels, [&](const auto& levels) {
+            return std::none_of(portfolio->positions.begin(), portfolio->positions.end(), [&](const auto& position) {
+                return position.quantity > 0.0 && position.ticker == levels.ticker && position.opened_on == levels.opened_on;
+            });
+        });
+        if (g_position_levels.size() != old_size) save_position_levels();
+    }
     std::size_t row_index = 0;
     if (portfolio) {
         for (const auto& position : portfolio->positions) {
@@ -633,12 +707,15 @@ void fill_portfolio() {
             bool stale = false;
             const auto source = std::find_if(g_items.begin(), g_items.end(), [&](const auto& item) { return item.ticker == position.ticker; });
             if (source != g_items.end()) stale = source->quote_stale;
+            const auto* levels = levels_for_position(position.ticker, position.opened_on);
             const std::string values[] = {money(position.quantity), money(position.average_entry_price),
                 position.current_price ? money(*position.current_price) + (stale ? " *" : "") : "—",
                 position.market_value ? money(*position.market_value) : "—",
                 position.unrealized_profit ? money(*position.unrealized_profit) : "—",
-                percent(position.unrealized_percent), money(position.realized_profit)};
-            for (int col = 1; col <= 7; ++col) {
+                percent(position.unrealized_percent), money(position.realized_profit),
+                levels && levels->stop_loss ? money(*levels->stop_loss) : "—",
+                levels && levels->take_profit ? money(*levels->take_profit) : "—"};
+            for (int col = 1; col <= 9; ++col) {
                 auto wide = widen(values[col - 1]); ListView_SetItemText(g_port_positions, static_cast<int>(row_index), col, wide.data());
             }
             ++row_index;
@@ -665,6 +742,64 @@ void fill_portfolio() {
         L"   Бумажная прибыль: " + widen(money(portfolio->total_unrealized_profit)) + L" ₽" +
         L"   Зафиксировано: " + widen(money(portfolio->total_realized_profit)) + L" ₽ (* — устаревшая цена)";
     SetWindowTextW(g_port_summary, summary.c_str());
+}
+
+void fill_position_level_editor() {
+    if (!g_position_stop || !g_position_take || !g_port_positions) return;
+    const int selected = ListView_GetNextItem(g_port_positions, -1, LVNI_SELECTED);
+    if (selected < 0) {
+        SetWindowTextW(g_position_stop, L""); SetWindowTextW(g_position_take, L"");
+        return;
+    }
+    wchar_t ticker_text[32]{};
+    ListView_GetItemText(g_port_positions, selected, 0, ticker_text, static_cast<int>(std::size(ticker_text)));
+    const auto ticker = narrow(ticker_text);
+    const auto position = open_position_for_ticker(ticker);
+    if (!position) return;
+    const auto* levels = levels_for_position(position->ticker, position->opened_on);
+    SetWindowTextW(g_position_stop, levels && levels->stop_loss ? widen(money(*levels->stop_loss)).c_str() : L"");
+    SetWindowTextW(g_position_take, levels && levels->take_profit ? widen(money(*levels->take_profit)).c_str() : L"");
+
+    const auto instrument = std::find_if(g_items.begin(), g_items.end(), [&](const auto& item) { return item.ticker == ticker; });
+    if (instrument != g_items.end()) {
+        g_selected = static_cast<std::size_t>(instrument - g_items.begin());
+        if (g_filter != WatchFilter::All) {
+            g_filter = WatchFilter::All;
+            SendMessageW(GetDlgItem(g_window, ID_FILTER), CB_SETCURSEL, 0, 0);
+        }
+        fill_list();
+    }
+}
+
+void save_selected_position_levels() {
+    const int selected = ListView_GetNextItem(g_port_positions, -1, LVNI_SELECTED);
+    if (selected < 0) {
+        MessageBoxW(g_window, L"Сначала выберите открытую позицию в таблице.", L"Уровни позиции", MB_ICONINFORMATION);
+        return;
+    }
+    wchar_t ticker_text[32]{};
+    ListView_GetItemText(g_port_positions, selected, 0, ticker_text, static_cast<int>(std::size(ticker_text)));
+    const auto ticker = narrow(ticker_text);
+    const auto position = open_position_for_ticker(ticker);
+    if (!position) {
+        MessageBoxW(g_window, L"Выбранная позиция уже закрыта. Обновите портфель.", L"Уровни позиции", MB_ICONWARNING);
+        return;
+    }
+    const auto stop_text = narrow(read_edit(g_position_stop));
+    const auto take_text = narrow(read_edit(g_position_take));
+    const auto stop = stop_text.empty() ? std::optional<double>{} : parse_finite_number(stop_text);
+    const auto take = take_text.empty() ? std::optional<double>{} : parse_finite_number(take_text);
+    PositionLevels levels{position->ticker, position->opened_on, stop, take};
+    if ((!stop_text.empty() && !stop) || (!take_text.empty() && !take) || !valid_position_levels(levels)) {
+        MessageBoxW(g_window, L"Введите положительные цены для стоп-лосса и тейк-профита. Пустое поле отключает уровень.",
+                    L"Некорректный уровень", MB_ICONWARNING);
+        return;
+    }
+    std::erase_if(g_position_levels, [&](const auto& existing) {
+        return existing.ticker == levels.ticker && existing.opened_on == levels.opened_on;
+    });
+    if (levels.stop_loss || levels.take_profit) g_position_levels.push_back(std::move(levels));
+    save_position_levels(); fill_portfolio(); InvalidateRect(g_window, nullptr, TRUE);
 }
 
 std::string today_date() {
@@ -702,6 +837,15 @@ void add_portfolio_transaction() {
         MessageBoxW(g_window, L"Продажа превышает доступный остаток акций или в журнале уже есть несогласованные операции.",
                     L"Недостаточно акций", MB_ICONWARNING);
         return;
+    }
+    if (transaction.side == PortfolioSide::Sell) {
+        const auto previous_position = open_position_for_ticker(ticker);
+        if (previous_position && transaction.quantity >= previous_position->quantity - 1e-9) {
+            std::erase_if(g_position_levels, [&](const auto& levels) {
+                return levels.ticker == previous_position->ticker && levels.opened_on == previous_position->opened_on;
+            });
+            save_position_levels();
+        }
     }
     g_portfolio_transactions = std::move(candidate);
     save_portfolio(); fill_portfolio();
@@ -965,13 +1109,16 @@ void remove_selected() {
 
 void draw_chart(HDC dc, RECT area) {
     FillRect(dc, &area, reinterpret_cast<HBRUSH>(COLOR_WINDOW + 1));
-    if (g_items.empty() || g_visible.empty() || g_items[g_selected].candles.empty()) {
+    if (g_items.empty() || g_selected >= g_items.size() || g_items[g_selected].candles.empty()) {
         SetBkMode(dc, TRANSPARENT);
         DrawTextW(dc, L"Нет данных для графика. Выберите акцию и нажмите «Обновить».", -1, &area, DT_CENTER | DT_VCENTER | DT_WORDBREAK);
         return;
     }
     const auto& item = g_items[g_selected];
     const auto& candles = item.candles;
+    const auto active_position = open_position_for_ticker(item.ticker);
+    const auto* position_levels = active_position
+        ? levels_for_position(active_position->ticker, active_position->opened_on) : nullptr;
     const auto sma20 = sma_series(candles, 20), sma50 = sma_series(candles, 50), sma200 = sma_series(candles, 200);
     const auto rsi = rsi_series(candles);
     const std::size_t count = candles.size();
@@ -991,11 +1138,29 @@ void draw_chart(HDC dc, RECT area) {
     text(area.left + 4, area.top + 19, "SMA20", RGB(232, 139, 43));
     text(area.left + 80, area.top + 19, "SMA50", RGB(34, 105, 181));
     text(area.left + 160, area.top + 19, "SMA200", RGB(135, 73, 170));
+    if (active_position) {
+        std::string position_legend = "Позиция: средняя " + money(active_position->average_entry_price);
+        if (position_levels && position_levels->stop_loss) position_legend += " | стоп " + money(*position_levels->stop_loss);
+        if (position_levels && position_levels->take_profit) position_legend += " | тейк " + money(*position_levels->take_profit);
+        text(area.left + 250, area.top + 19, position_legend, RGB(55, 65, 80));
+    }
     double minimum = candles[first].low, maximum = candles[first].high;
     for (std::size_t i = first; i < count; ++i) {
         minimum = std::min(minimum, candles[i].low); maximum = std::max(maximum, candles[i].high);
         for (const auto* average : {&sma20, &sma50, &sma200}) {
             if ((*average)[i]) { minimum = std::min(minimum, *(*average)[i]); maximum = std::max(maximum, *(*average)[i]); }
+        }
+    }
+    if (active_position) {
+        minimum = std::min(minimum, active_position->average_entry_price);
+        maximum = std::max(maximum, active_position->average_entry_price);
+        if (position_levels && position_levels->stop_loss) {
+            minimum = std::min(minimum, *position_levels->stop_loss);
+            maximum = std::max(maximum, *position_levels->stop_loss);
+        }
+        if (position_levels && position_levels->take_profit) {
+            minimum = std::min(minimum, *position_levels->take_profit);
+            maximum = std::max(maximum, *position_levels->take_profit);
         }
     }
     const double padding = std::max((maximum - minimum) * 0.06, maximum * 0.001);
@@ -1036,6 +1201,21 @@ void draw_chart(HDC dc, RECT area) {
     draw_line(sma20, RGB(232, 139, 43), false);
     draw_line(sma50, RGB(34, 105, 181), false);
     draw_line(sma200, RGB(135, 73, 170), false);
+    const auto draw_position_level = [&](double value, const std::string& label, COLORREF color) {
+        HPEN pen = CreatePen(PS_DASH, 1, color);
+        HGDIOBJ previous = SelectObject(dc, pen);
+        const int y = py(value);
+        MoveToEx(dc, plot.left, y, nullptr); LineTo(dc, plot.right, y);
+        SelectObject(dc, previous); DeleteObject(pen);
+        text(std::max(plot.left + 4, plot.right - 150), y - 15, label + " " + money(value), color);
+    };
+    if (active_position) {
+        draw_position_level(active_position->average_entry_price, "Средняя", RGB(70, 90, 120));
+        if (position_levels && position_levels->stop_loss)
+            draw_position_level(*position_levels->stop_loss, "Стоп", RGB(200, 55, 65));
+        if (position_levels && position_levels->take_profit)
+            draw_position_level(*position_levels->take_profit, "Тейк", RGB(25, 135, 90));
+    }
     const auto fill_band = [&](int top, int bottom, COLORREF color) {
         RECT band{oscillator.left, top, oscillator.right, bottom}; HBRUSH brush = CreateSolidBrush(color);
         FillRect(dc, &band, brush); DeleteObject(brush);
@@ -1269,19 +1449,31 @@ void create_controls(HWND window) {
     if (g_font) SendMessageW(g_port_summary, WM_SETFONT, reinterpret_cast<WPARAM>(g_font), TRUE);
     g_portfolio_controls.push_back(g_port_summary);
     g_port_positions = CreateWindowExW(WS_EX_CLIENTEDGE, WC_LISTVIEWW, L"", WS_CHILD | WS_VISIBLE | LVS_REPORT | LVS_SINGLESEL | LVS_SHOWSELALWAYS,
-        16, 185, 1260, 255, window, reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_PORT_POSITIONS)), GetModuleHandleW(nullptr), nullptr);
+        16, 185, 1260, 220, window, reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_PORT_POSITIONS)), GetModuleHandleW(nullptr), nullptr);
     g_portfolio_controls.push_back(g_port_positions);
     ListView_SetExtendedListViewStyle(g_port_positions, LVS_EX_FULLROWSELECT | LVS_EX_GRIDLINES | LVS_EX_DOUBLEBUFFER);
-    const wchar_t* position_headers[] = {L"Тикер",L"Акций",L"Средняя, ₽",L"Котировка, ₽",L"Стоимость, ₽",L"Бумажная прибыль, ₽",L"Бумажная, %",L"Зафиксировано, ₽"};
-    const int position_widths[] = {75,80,105,110,115,155,100,145};
-    for (int i=0;i<8;++i) { LVCOLUMNW col{}; col.mask=LVCF_TEXT|LVCF_WIDTH; col.pszText=const_cast<wchar_t*>(position_headers[i]); col.cx=position_widths[i]; ListView_InsertColumn(g_port_positions,i,&col); }
-    add_control(window, L"STATIC", L"Журнал операций", 0, 16, 458, 160, 24, 0);
+    const wchar_t* position_headers[] = {L"Тикер",L"Акций",L"Средняя, ₽",L"Котировка, ₽",L"Стоимость, ₽",L"Бумажная прибыль, ₽",L"Бумажная, %",L"Зафиксировано, ₽",L"Стоп-лосс, ₽",L"Тейк-профит, ₽"};
+    const int position_widths[] = {75,80,105,110,115,155,100,145,110,125};
+    for (int i=0;i<10;++i) { LVCOLUMNW col{}; col.mask=LVCF_TEXT|LVCF_WIDTH; col.pszText=const_cast<wchar_t*>(position_headers[i]); col.cx=position_widths[i]; ListView_InsertColumn(g_port_positions,i,&col); }
+    add_control(window, L"STATIC", L"Стоп-лосс, ₽", 0, 16, 418, 105, 24, 0);
+    add_control(window, L"EDIT", L"", WS_BORDER | ES_AUTOHSCROLL, 121, 414, 110, 28, ID_POSITION_STOP);
+    g_position_stop = GetDlgItem(window, ID_POSITION_STOP);
+    add_control(window, L"STATIC", L"Тейк-профит, ₽", 0, 248, 418, 115, 24, 0);
+    add_control(window, L"EDIT", L"", WS_BORDER | ES_AUTOHSCROLL, 367, 414, 110, 28, ID_POSITION_TAKE);
+    g_position_take = GetDlgItem(window, ID_POSITION_TAKE);
+    g_position_levels_save = CreateWindowExW(0, L"BUTTON", L"Сохранить уровни", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
+        494, 414, 155, 28, window, reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_POSITION_LEVELS_SAVE)), GetModuleHandleW(nullptr), nullptr);
+    if (g_font) SendMessageW(g_position_levels_save, WM_SETFONT, reinterpret_cast<WPARAM>(g_font), TRUE);
+    g_portfolio_controls.push_back(g_position_levels_save);
+    add_control(window, L"STATIC", L"Выберите позицию; пустое поле отключает уровень. Линии также показываются на графике выбранной акции.",
+        0, 664, 418, 610, 24, 0);
+    add_control(window, L"STATIC", L"Журнал операций", 0, 16, 466, 160, 24, 0);
     g_port_delete = CreateWindowExW(0, L"BUTTON", L"Удалить выбранную", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-        1060, 451, 170, 28, window, reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_PORT_DELETE)), GetModuleHandleW(nullptr), nullptr);
+        1060, 458, 170, 28, window, reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_PORT_DELETE)), GetModuleHandleW(nullptr), nullptr);
     if (g_font) SendMessageW(g_port_delete, WM_SETFONT, reinterpret_cast<WPARAM>(g_font), TRUE);
     g_portfolio_controls.push_back(g_port_delete);
     g_port_transactions_list = CreateWindowExW(WS_EX_CLIENTEDGE, WC_LISTVIEWW, L"", WS_CHILD | WS_VISIBLE | LVS_REPORT | LVS_SINGLESEL | LVS_SHOWSELALWAYS,
-        16, 485, 1260, 300, window, reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_PORT_TRANSACTIONS)), GetModuleHandleW(nullptr), nullptr);
+        16, 492, 1260, 300, window, reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_PORT_TRANSACTIONS)), GetModuleHandleW(nullptr), nullptr);
     g_portfolio_controls.push_back(g_port_transactions_list);
     ListView_SetExtendedListViewStyle(g_port_transactions_list, LVS_EX_FULLROWSELECT | LVS_EX_GRIDLINES | LVS_EX_DOUBLEBUFFER);
     const wchar_t* operation_headers[] = {L"Дата",L"Тикер",L"Операция",L"Акций",L"Цена, ₽",L"Комиссия, ₽"};
@@ -1361,7 +1553,7 @@ LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lp
     switch (message) {
     case WM_CREATE:
         g_window = window; create_controls(window); load_signal_settings(); synchronize_signal_controls();
-        update_auto_refresh_timer(); load_watchlist(); load_trades(); load_portfolio(); fill_list(); fill_trades(); fill_signals(); fill_portfolio();
+        update_auto_refresh_timer(); load_watchlist(); load_trades(); load_portfolio(); load_position_levels(); fill_list(); fill_trades(); fill_signals(); fill_portfolio();
         for (const auto& item : g_items) {
             SendMessageW(g_backtest_ticker, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(widen(item.ticker).c_str()));
             SendMessageW(g_port_ticker, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(widen(item.ticker).c_str()));
@@ -1380,9 +1572,9 @@ LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lp
         if (g_signal_list) MoveWindow(g_signal_list, 16, 202, width - 32, height - 222, TRUE);
         if (g_backtest_result) MoveWindow(g_backtest_result, 16, 145, width - 32, 260, TRUE);
         if (g_port_summary) MoveWindow(g_port_summary, 16, 157, width - 32, 24, TRUE);
-        if (g_port_positions) MoveWindow(g_port_positions, 16, 185, width - 32, 255, TRUE);
-        if (g_port_transactions_list) MoveWindow(g_port_transactions_list, 16, 485, width - 32, std::max(100, height - 505), TRUE);
-        if (g_port_delete) MoveWindow(g_port_delete, std::max(870, width - 190), 451, 170, 28, TRUE);
+        if (g_port_positions) MoveWindow(g_port_positions, 16, 185, width - 32, 220, TRUE);
+        if (g_port_transactions_list) MoveWindow(g_port_transactions_list, 16, 492, width - 32, std::max(100, height - 512), TRUE);
+        if (g_port_delete) MoveWindow(g_port_delete, std::max(870, width - 190), 458, 170, 28, TRUE);
         return 0;
     }
     case WM_GETMINMAXINFO: {
@@ -1402,6 +1594,7 @@ LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lp
         case ID_BACKTEST_RUN: start_backtest(); return 0;
         case ID_PORT_ADD: add_portfolio_transaction(); return 0;
         case ID_PORT_DELETE: delete_portfolio_transaction(); return 0;
+        case ID_POSITION_LEVELS_SAVE: save_selected_position_levels(); return 0;
         case ID_SIG_SAVE:
             if (read_signal_settings_from_controls()) MessageBoxW(window, L"Условия сохранены. Уведомления будут приходить при появлении новых совпадений; текущие сигналы не дублируются.", L"Сигналы", MB_ICONINFORMATION);
             return 0;
@@ -1429,6 +1622,12 @@ LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lp
             if (g_filling) return 0;
             const int selected = selected_instrument();
             if (selected >= 0 && static_cast<std::size_t>(selected) < g_items.size()) { g_selected = static_cast<std::size_t>(selected); update_analysis(); }
+        }
+        if (reinterpret_cast<NMHDR*>(lparam)->idFrom == ID_PORT_POSITIONS &&
+            reinterpret_cast<NMHDR*>(lparam)->code == LVN_ITEMCHANGED) {
+            const auto* changed = reinterpret_cast<const NMLISTVIEW*>(lparam);
+            if ((changed->uNewState & LVIS_SELECTED) != 0) fill_position_level_editor();
+            return 0;
         }
         return 0;
     case WM_FETCH_PROGRESS: {
@@ -1475,7 +1674,7 @@ LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lp
     }
     case WM_DESTROY:
         KillTimer(window, TIMER_AUTO_REFRESH);
-        save_watchlist(); save_trades(); save_portfolio(); save_signal_settings();
+        save_watchlist(); save_trades(); save_portfolio(); save_position_levels(); save_signal_settings();
         if (g_notification_icon_ready) Shell_NotifyIconW(NIM_DELETE, &g_notification_icon);
         if (g_font) DeleteObject(g_font); PostQuitMessage(0); return 0;
     }
@@ -1489,7 +1688,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
     wc.hCursor = LoadCursorW(nullptr, IDC_ARROW); wc.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_WINDOW + 1);
     wc.lpszClassName = L"MOEXWatchWindow"; wc.hIcon = LoadIconW(nullptr, IDI_APPLICATION);
     if (!RegisterClassExW(&wc)) return 1;
-    HWND window = CreateWindowExW(0, wc.lpszClassName, L"MOEX Watch 0.3.0 — аналитика и портфель", WS_OVERLAPPEDWINDOW,
+    HWND window = CreateWindowExW(0, wc.lpszClassName, L"MOEX Watch 0.3.1 — аналитика и портфель", WS_OVERLAPPEDWINDOW,
                                   CW_USEDEFAULT, CW_USEDEFAULT, 1340, 870, nullptr, nullptr, instance, nullptr);
     if (!window) return 2;
     ShowWindow(window, show); UpdateWindow(window);

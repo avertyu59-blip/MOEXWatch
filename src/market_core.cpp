@@ -332,9 +332,17 @@ bool valid_portfolio_transaction(const PortfolioTransaction& transaction) noexce
            (transaction.side == PortfolioSide::Buy || transaction.side == PortfolioSide::Sell);
 }
 
+bool valid_position_levels(const PositionLevels& levels) noexcept {
+    const auto valid_level = [](const std::optional<double>& value) {
+        return !value || (std::isfinite(*value) && *value > 0.0);
+    };
+    return valid_ticker(levels.ticker) && valid_iso_date(levels.opened_on) &&
+           valid_level(levels.stop_loss) && valid_level(levels.take_profit);
+}
+
 std::optional<PortfolioSummary> calculate_portfolio(const std::vector<PortfolioTransaction>& transactions,
                                                     const std::vector<Quote>& quotes) {
-    struct State { double quantity{}; double average_cost{}; double realized{}; };
+    struct State { double quantity{}; double average_cost{}; double realized{}; std::string opened_on; };
     std::vector<PortfolioTransaction> ordered = transactions;
     for (const auto& transaction : ordered) if (!valid_portfolio_transaction(transaction)) return std::nullopt;
     std::stable_sort(ordered.begin(), ordered.end(), [](const auto& left, const auto& right) {
@@ -344,6 +352,7 @@ std::optional<PortfolioSummary> calculate_portfolio(const std::vector<PortfolioT
     for (const auto& transaction : ordered) {
         auto& state = states[upper(transaction.ticker)];
         if (transaction.side == PortfolioSide::Buy) {
+            if (state.quantity == 0.0) state.opened_on = transaction.date;
             const double old_cost = state.quantity * state.average_cost;
             const double added_cost = transaction.quantity * transaction.price + transaction.commission;
             const double new_quantity = state.quantity + transaction.quantity;
@@ -356,7 +365,7 @@ std::optional<PortfolioSummary> calculate_portfolio(const std::vector<PortfolioT
             if (transaction.quantity > state.quantity + quantity_epsilon) return std::nullopt;
             state.realized += transaction.quantity * (transaction.price - state.average_cost) - transaction.commission;
             state.quantity -= transaction.quantity;
-            if (state.quantity <= quantity_epsilon) { state.quantity = 0.0; state.average_cost = 0.0; }
+            if (state.quantity <= quantity_epsilon) { state.quantity = 0.0; state.average_cost = 0.0; state.opened_on.clear(); }
             if (!std::isfinite(state.realized)) return std::nullopt;
         }
     }
@@ -369,6 +378,7 @@ std::optional<PortfolioSummary> calculate_portfolio(const std::vector<PortfolioT
     for (const auto& [ticker, state] : states) {
         PortfolioPosition position;
         position.ticker = ticker;
+        position.opened_on = state.opened_on;
         position.quantity = state.quantity;
         position.average_entry_price = state.average_cost;
         position.realized_profit = state.realized;

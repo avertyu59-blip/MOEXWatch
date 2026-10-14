@@ -64,6 +64,7 @@ struct PortfolioTransaction {
 
 struct PortfolioPosition {
     std::string ticker;
+    std::string opened_on;
     double quantity{};
     double average_entry_price{};
     std::optional<double> current_price;
@@ -71,6 +72,13 @@ struct PortfolioPosition {
     std::optional<double> unrealized_profit;
     std::optional<double> unrealized_percent;
     double realized_profit{};
+};
+
+struct PositionLevels {
+    std::string ticker;
+    std::string opened_on;
+    std::optional<double> stop_loss;
+    std::optional<double> take_profit;
 };
 
 struct PortfolioSummary {
@@ -128,6 +136,7 @@ std::string format_price(double value);
 bool valid_trade(const Trade& trade) noexcept;
 std::optional<TradeResult> calculate_trade(const Trade& trade) noexcept;
 bool valid_portfolio_transaction(const PortfolioTransaction& transaction) noexcept;
+bool valid_position_levels(const PositionLevels& levels) noexcept;
 std::optional<PortfolioSummary> calculate_portfolio(const std::vector<PortfolioTransaction>& transactions,
                                                     const std::vector<Quote>& quotes);
 bool valid_signal_settings(const SignalSettings& settings) noexcept;
