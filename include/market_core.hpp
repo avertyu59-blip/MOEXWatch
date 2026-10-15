@@ -17,11 +17,48 @@ struct Candle {
     double volume{};
 };
 
+enum class DividendStatus { Unknown, Forecast, Recommended, Approved, Cancelled };
+enum class DividendVerification { NotChecked, Matched, Conflict, Unavailable };
+
 struct DividendEvent {
     std::string record_date;
     double amount_per_share{};
     std::string currency;
+    DividendStatus status{DividendStatus::Unknown};
+    std::string period;
+    std::string source_url;
+    std::string reported_last_buy;
+    std::string last_buy_date;
+    std::string last_buy_basis;
+    std::string issuer_url;
+    std::string issuer_checked_at;
+    DividendVerification verification{DividendVerification::NotChecked};
 };
+
+struct DividendSnapshot {
+    std::string ticker;
+    std::string checked_at;
+    std::vector<DividendEvent> events;
+};
+
+struct TradingDay {
+    std::string date;
+    bool traded{};
+    std::string session_date; // Weekend session can belong to a later business day.
+};
+
+// Invalid provider responses throw; a recognized empty table is a valid empty result.
+std::vector<DividendEvent> parse_smartlab_dividends(std::string_view html, std::string_view ticker,
+                                                 std::string_view source_url);
+std::vector<DividendEvent> parse_lukoil_dividends(std::string_view html);
+void reconcile_dividends(std::vector<DividendEvent>& events, const std::vector<DividendEvent>& official,
+                         std::string_view issuer_url, std::string_view checked_at);
+void merge_dividends(std::vector<DividendEvent>& events, const std::vector<DividendEvent>& incoming);
+std::optional<std::string> dividend_last_buy(std::string_view record_date, const std::vector<TradingDay>& calendar);
+std::vector<TradingDay> moex_calendar_2026();
+std::string serialize_dividend_snapshot(const DividendSnapshot& snapshot);
+std::optional<DividendSnapshot> parse_dividend_snapshot(std::string_view csv, std::string_view ticker);
+std::string dividend_status_text(DividendStatus status);
 
 struct Quote {
     std::string ticker;

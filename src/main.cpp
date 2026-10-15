@@ -62,6 +62,7 @@ struct Instrument {
     bool candles_stale{true};
     std::vector<DividendEvent> dividends;
     std::string dividend_error;
+    std::string dividend_note;
     std::string dividends_checked_at;
     bool dividends_stale{true};
 };
@@ -71,6 +72,7 @@ struct DividendFetchResult {
     std::vector<DividendEvent> events;
     std::string error;
     std::string checked_at;
+    std::string note;
 };
 
 struct MarketRefreshResult {
@@ -482,32 +484,32 @@ std::runtime_error network_error(const char* message) {
     return std::runtime_error(std::string(message) + " (WinHTTP/Windows " + std::to_string(code) + ")");
 }
 
-std::string https_get(const std::wstring& path) {
-    InternetHandle session(WinHttpOpen(L"MOEXWatch/1.0", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
+std::string https_get(const std::wstring& path, const wchar_t* host = L"iss.moex.com") {
+    InternetHandle session(WinHttpOpen(L"MOEXWatch/0.5.2", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
                                        WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0));
     if (!session.value) throw network_error("Не удалось открыть HTTPS-сессию");
     WinHttpSetTimeouts(session.value, 5000, 5000, 6000, 6000);
-    InternetHandle connection(WinHttpConnect(session.value, L"iss.moex.com", INTERNET_DEFAULT_HTTPS_PORT, 0));
-    if (!connection.value) throw network_error("Не удалось подключиться к MOEX ISS");
+    InternetHandle connection(WinHttpConnect(session.value, host, INTERNET_DEFAULT_HTTPS_PORT, 0));
+    if (!connection.value) throw network_error("Не удалось подключиться к источнику");
     InternetHandle request(WinHttpOpenRequest(connection.value, L"GET", path.c_str(), nullptr,
                                                WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE));
     if (!request.value) throw network_error("Не удалось создать HTTPS-запрос");
     if (!WinHttpSendRequest(request.value, WINHTTP_NO_ADDITIONAL_HEADERS, 0, WINHTTP_NO_REQUEST_DATA, 0, 0, 0) ||
-        !WinHttpReceiveResponse(request.value, nullptr)) throw network_error("Ошибка запроса к MOEX ISS");
+        !WinHttpReceiveResponse(request.value, nullptr)) throw network_error("Ошибка HTTPS-запроса");
     DWORD status = 0, size = sizeof(status);
     if (!WinHttpQueryHeaders(request.value, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
                              WINHTTP_HEADER_NAME_BY_INDEX, &status, &size, WINHTTP_NO_HEADER_INDEX) || status < 200 || status >= 300)
-        throw std::runtime_error("MOEX ISS ответил HTTP " + std::to_string(status));
+        throw std::runtime_error("Источник ответил HTTP " + std::to_string(status));
     std::string body;
     for (;;) {
         DWORD available = 0;
-        if (!WinHttpQueryDataAvailable(request.value, &available)) throw std::runtime_error("Ошибка чтения ответа MOEX ISS");
+        if (!WinHttpQueryDataAvailable(request.value, &available)) throw std::runtime_error("Ошибка чтения HTTPS-ответа");
         if (available == 0) break;
-        if (body.size() + available > 2U * 1024U * 1024U) throw std::runtime_error("Ответ MOEX ISS превышает 2 МБ");
+        if (body.size() + available > 2U * 1024U * 1024U) throw std::runtime_error("Ответ источника превышает 2 МБ");
         const auto old_size = body.size();
         body.resize(old_size + available);
         DWORD received = 0;
-        if (!WinHttpReadData(request.value, body.data() + old_size, available, &received)) throw std::runtime_error("Ошибка чтения ответа MOEX ISS");
+        if (!WinHttpReadData(request.value, body.data() + old_size, available, &received)) throw std::runtime_error("Ошибка чтения HTTPS-ответа");
         body.resize(old_size + received);
     }
     return body;
@@ -524,23 +526,76 @@ std::string date_from() {
 
 std::string today_date();
 
-std::vector<DividendEvent> fetch_dividend_events(std::string_view ticker) {
-    const std::wstring path = L"/iss/securities/" + widen(ticker) +
-        L"/dividends.csv?iss.meta=off&iss.delimiter=%3B&iss.dp=point&lang=en";
-    const auto csv = https_get(path);
-    auto events = parse_dividends_csv(csv);
-    if (events.empty()) {
-        const auto rows = parse_csv(csv);
-        if (rows.empty() || std::none_of(rows.begin(), rows.end(), [](const auto& row) {
-                return std::any_of(row.begin(), row.end(), [](const auto& cell) {
-                    std::string upper_cell = cell;
-                    std::transform(upper_cell.begin(), upper_cell.end(), upper_cell.begin(),
-                        [](unsigned char ch) { return static_cast<char>(std::toupper(ch)); });
-                    return upper_cell == "REGISTRYCLOSEDATE";
-                });
-            })) throw std::runtime_error("MOEX ISS вернул неизвестный формат дивидендов");
+std::string local_timestamp() {
+    SYSTEMTIME time{}; GetLocalTime(&time); std::ostringstream out;
+    out << time.wYear << '-' << std::setfill('0') << std::setw(2) << time.wMonth << '-'
+        << std::setw(2) << time.wDay << ' ' << std::setw(2) << time.wHour << ':' << std::setw(2) << time.wMinute;
+    return out.str();
+}
+
+std::filesystem::path dividends_cache_path(std::string_view ticker) {
+    if (!valid_ticker(ticker)) throw std::runtime_error("Некорректный тикер кэша");
+    return watchlist_path().parent_path() / (L"dividends_" + widen(ticker) + L".csv");
+}
+
+void load_dividend_cache(Instrument& item) {
+    if (!item.dividends_checked_at.empty()) return;
+    const auto path = dividends_cache_path(item.ticker);
+    std::error_code ec;
+    const auto size = std::filesystem::file_size(path, ec);
+    if (ec || size > 1024U * 1024U) return;
+    std::ifstream in(path, std::ios::binary);
+    const std::string csv((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    const auto saved = parse_dividend_snapshot(csv, item.ticker);
+    if (!saved) { item.dividend_note = "Сохранённый файл повреждён; ожидается загрузка из сети."; return; }
+    item.dividends = saved->events; item.dividends_checked_at = saved->checked_at;
+    item.dividends_stale = true;
+}
+
+void save_dividend_cache(const Instrument& item) {
+    const auto path = dividends_cache_path(item.ticker);
+    auto temporary = path; temporary += L".tmp";
+    {
+        std::ofstream out(temporary, std::ios::binary | std::ios::trunc);
+        const auto data = serialize_dividend_snapshot({item.ticker, item.dividends_checked_at, item.dividends});
+        if (!out || !out.write(data.data(), static_cast<std::streamsize>(data.size())) || !out.flush())
+            throw std::runtime_error("Не удалось сохранить события на диск");
     }
-    return events;
+    if (!MoveFileExW(temporary.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
+        throw network_error("Не удалось заменить файл сохранённых событий");
+}
+
+void fetch_dividend_events(DividendFetchResult& result) {
+    const auto ticker = result.ticker;
+    const std::string history_url = "https://smart-lab.ru/q/" + ticker + "/dividend/";
+    std::vector<DividendEvent> history, upcoming;
+    // Either page failing is a partial refresh, never a successful empty calendar.
+    // Keep the last complete snapshot instead of erasing cancelled/withdrawn events.
+    history = parse_smartlab_dividends(https_get(L"/q/" + widen(ticker) + L"/dividend/", L"smart-lab.ru"), ticker, history_url);
+    upcoming = parse_smartlab_dividends(https_get(L"/dividends/", L"smart-lab.ru"), ticker, "https://smart-lab.ru/dividends/");
+    merge_dividends(history, upcoming);
+    if (ticker == "LKOH") {
+        const std::string issuer = "https://lukoil.ru/InvestorAndShareholderCenter/Securities/Dividends";
+        try {
+            const auto official = parse_lukoil_dividends(https_get(L"/InvestorAndShareholderCenter/Securities/Dividends", L"lukoil.ru"));
+            reconcile_dividends(history, official, issuer, result.checked_at);
+            result.note = "Сверка: официальная таблица ЛУКОЙЛ (совпадение даты и суммы).";
+        } catch (const std::exception&) {
+            result.note = "Сайт эмитента недоступен либо изменён; сверка не выполнена.";
+            for (auto& e : history) { e.issuer_url = issuer; e.issuer_checked_at = result.checked_at; e.verification = DividendVerification::Unavailable; }
+        }
+    } else result.note = "Автоматическая сверка с эмитентом для этой бумаги пока не подключена.";
+    const auto calendar = moex_calendar_2026();
+    for (auto& e : history) {
+        const auto buy = dividend_last_buy(e.record_date, calendar);
+        if (buy) {
+            e.last_buy_date = *buy;
+            e.last_buy_basis = "Расчёт T+1, MOEX 2026: https://www.moex.com/n96571 (сверено 15.10.2026)";
+            if (!e.reported_last_buy.empty() && e.reported_last_buy != *buy)
+                e.last_buy_basis += "; отличается от даты календаря источника";
+        }
+    }
+    result.events = std::move(history);
 }
 
 Instrument fetch_instrument(const Instrument& previous) {
@@ -1372,10 +1427,11 @@ void draw_chart(HDC dc, RECT area, std::size_t instrument_index, ChartPanel pane
         }
         HPEN event_pen = CreatePen(PS_DOT, 1, RGB(190, 91, 40)); old_pen = SelectObject(dc, event_pen);
         for (const auto& event : item.dividends) {
+            if (event.status == DividendStatus::Cancelled || event.verification == DividendVerification::Conflict) continue;
             for (std::size_t i = first; i < count; ++i) {
                 if (candles[i].date.substr(0, 10) != event.record_date) continue;
                 const int x = x_at(i); MoveToEx(dc, x, plot.top, nullptr); LineTo(dc, x, plot.bottom);
-                text(x + 3, plot.top + 2, "D", RGB(160, 80, 30)); break;
+                text(x + 3, plot.top + 2, event.status == DividendStatus::Forecast ? "D?" : "D", RGB(160, 80, 30)); break;
             }
         }
         SelectObject(dc, old_pen); DeleteObject(event_pen);
@@ -1393,50 +1449,55 @@ void fill_dividend_list() {
     const auto& item = g_items[g_dividend_instrument];
     for (std::size_t index = 0; index < item.dividends.size(); ++index) {
         const auto& event = item.dividends[index];
-        const Candle* previous = nullptr;
-        if (!item.candles.empty() && event.record_date <= item.candles.back().date.substr(0, 10)) {
-            for (const auto& candle : item.candles) {
-                if (candle.date.size() >= 10 && candle.date.substr(0, 10) < event.record_date) previous = &candle;
+        const bool historical = !event.record_date.empty() && event.record_date < today_date();
+        std::wstring yield = L"н/д";
+        if (event.status != DividendStatus::Cancelled && event.verification != DividendVerification::Conflict) {
+            if (!historical && item.quote.last && *item.quote.last > 0.0 && !item.quote_stale)
+                yield = widen(percent(event.amount_per_share / *item.quote.last * 100.0) + " (к текущей)");
+            else if (!event.last_buy_date.empty()) {
+                const auto candle = std::find_if(item.candles.begin(), item.candles.end(), [&](const auto& c) { return c.date.substr(0,10) == event.last_buy_date; });
+                if (candle != item.candles.end() && candle->close > 0.0 && !item.candles_stale)
+                    yield = widen(percent(event.amount_per_share / candle->close * 100.0) + " (к закрытию)");
             }
         }
-        std::wstring last_buy = previous ? widen(previous->date.substr(0, 10)) : L"н/д";
-        std::wstring amount = widen(money(event.amount_per_share) + " " + event.currency);
-        std::wstring yield = L"н/д";
-        if (previous && previous->close > 0.0 && (event.currency == "RUB" || event.currency == "SUR"))
-            yield = widen(percent(event.amount_per_share / previous->close * 100.0));
-        const bool future = event.record_date >= today_date();
-        std::wstring status = future ? L"Событие в ISS; статус требует проверки" : L"Историческая запись MOEX ISS";
         LVITEMW row{}; row.mask = LVIF_TEXT; row.iItem = static_cast<int>(index);
-        std::wstring date = widen(event.record_date);
+        std::wstring date = event.record_date.empty() ? L"н/д (прогноз)" : widen(event.record_date);
         row.pszText = date.data();
         const int row_index = ListView_InsertItem(g_dividend_list, &row);
-        const auto set = [&](int column, std::wstring value) {
-            ListView_SetItemText(g_dividend_list, row_index, column, value.data());
-        };
-        set(1, std::move(last_buy)); set(2, std::move(amount)); set(3, std::move(yield)); set(4, std::move(status));
+        const auto set = [&](int column, std::wstring value) { ListView_SetItemText(g_dividend_list, row_index, column, value.data()); };
+        set(1, event.last_buy_date.empty() ? L"н/д" : widen(event.last_buy_date));
+        set(2, widen(money(event.amount_per_share) + " " + event.currency)); set(3, std::move(yield));
+        set(4, widen(dividend_status_text(event.status)));
+        const std::string verification = event.verification == DividendVerification::Matched ? "Совпало с эмитентом" :
+            event.verification == DividendVerification::Conflict ? "РАСХОЖДЕНИЕ с эмитентом" :
+            event.verification == DividendVerification::Unavailable ? "Сайт эмитента недоступен" : "Не подтверждено эмитентом";
+        set(5, widen(verification + (event.issuer_checked_at.empty() ? "" : " | " + event.issuer_checked_at)));
+        set(6, widen(event.reported_last_buy.empty() ? "н/д" : event.reported_last_buy));
+        set(7, widen(event.source_url)); set(8, widen(event.issuer_url)); set(9, widen(event.last_buy_basis));
     }
     if (g_dividend_info) {
-        const std::wstring source = widen("Источник: https://iss.moex.com/iss/securities/" + item.ticker +
-            "/dividends.json | Проверено: " + (item.dividends_checked_at.empty() ? "не загружено" : item.dividends_checked_at) +
-            (item.dividends_stale ? " | данные устарели" : "") +
-            (item.dividends.empty() ? " | записей не получено" : "") +
-            " | ¹ Последняя сессия перед отсечкой; ² брутто сумма / её закрытие. ISS может не содержать все события.");
-        SetWindowTextW(g_dividend_info, source.c_str());
+        std::string info = "Обновлено: " + (item.dividends_checked_at.empty() ? "ещё не загружено" : item.dividends_checked_at) +
+            (item.dividends_stale ? " | сохранённые данные, актуальность не подтверждена" : "") +
+            (item.dividends.empty() ? " | событий в полученных таблицах нет" : "") +
+            "\r\nSmart-Lab и таблица ЛУКОЙЛ. Двойной щелчок — открыть источник (столбец «Эмитент» — официальный сайт).\r\n¹ Расчёт T+1 по опубликованному расписанию MOEX 2026; вне покрытия — н/д. ² До налогов. Прогноз и рекомендация не гарантируют выплату.";
+        if (!item.dividend_note.empty()) info += "\r\n" + item.dividend_note;
+        if (!item.dividend_error.empty()) info += "\r\nОбновление не удалось: " + item.dividend_error;
+        SetWindowTextW(g_dividend_info, widen(info).c_str());
     }
 }
 
 void refresh_dividend_events() {
     if (!g_dividend_window || g_dividend_instrument >= g_items.size()) return;
     const std::string ticker = g_items[g_dividend_instrument].ticker;
-    if (g_dividend_info) SetWindowTextW(g_dividend_info, L"Загружаю события из MOEX ISS…");
+    if (g_dividend_info) SetWindowTextW(g_dividend_info, L"Загружаю открытый календарь дивидендов…");
     const HWND target = g_window;
     const auto request = ++g_dividend_request;
     EnableWindow(g_dividend_refresh, FALSE);
     std::thread([target, ticker, request]() {
         auto result = std::make_unique<DividendFetchResult>();
         result->ticker = ticker;
-        result->checked_at = today_date();
-        try { result->events = fetch_dividend_events(ticker); }
+        result->checked_at = local_timestamp();
+        try { fetch_dividend_events(*result); }
         catch (const std::exception& ex) { result->error = ex.what(); }
         auto* raw = result.release();
         if (!PostMessageW(target, WM_DIVIDENDS_READY, request, reinterpret_cast<LPARAM>(raw))) delete raw;
@@ -1447,16 +1508,16 @@ LRESULT CALLBACK dividends_window_proc(HWND window, UINT message, WPARAM wparam,
     switch (message) {
     case WM_CREATE: {
         g_dividend_window = window;
-        g_dividend_info = CreateWindowExW(0, L"STATIC", L"Загружаю события из MOEX ISS…", WS_CHILD | WS_VISIBLE | SS_LEFT,
-            12, 10, 1000, 68, window, nullptr, GetModuleHandleW(nullptr), nullptr);
+        g_dividend_info = CreateWindowExW(0, L"STATIC", L"Загружаю открытый календарь дивидендов…", WS_CHILD | WS_VISIBLE | SS_LEFT,
+            12, 10, 1000, 92, window, nullptr, GetModuleHandleW(nullptr), nullptr);
         g_dividend_refresh = CreateWindowExW(0, L"BUTTON", L"Обновить события", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
             1015, 8, 160, 28, window, reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_DIVIDENDS_REFRESH)), GetModuleHandleW(nullptr), nullptr);
         g_dividend_list = CreateWindowExW(WS_EX_CLIENTEDGE, WC_LISTVIEWW, L"", WS_CHILD | WS_VISIBLE | LVS_REPORT | LVS_SINGLESEL | LVS_SHOWSELALWAYS,
-            12, 86, 1140, 195, window, reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_DIVIDENDS_LIST)), GetModuleHandleW(nullptr), nullptr);
+            12, 110, 1140, 165, window, reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_DIVIDENDS_LIST)), GetModuleHandleW(nullptr), nullptr);
         ListView_SetExtendedListViewStyle(g_dividend_list, LVS_EX_FULLROWSELECT | LVS_EX_GRIDLINES | LVS_EX_DOUBLEBUFFER);
-        const wchar_t* headers[] = {L"Дата отсечки", L"Последний день покупки¹", L"На акцию", L"Доходность²", L"Статус данных"};
-        const int widths[] = {115, 180, 125, 110, 360};
-        for (int i = 0; i < 5; ++i) {
+        const wchar_t* headers[] = {L"Дата отсечки", L"Последний день покупки¹", L"На акцию", L"Доходность²", L"Статус", L"Сверка с эмитентом", L"Купить до (источник)", L"Источник", L"Эмитент", L"Основание расчёта¹"};
+        const int widths[] = {115, 180, 125, 160, 230, 280, 170, 340, 340, 460};
+        for (int i = 0; i < 10; ++i) {
             LVCOLUMNW column{}; column.mask = LVCF_TEXT | LVCF_WIDTH;
             column.pszText = const_cast<wchar_t*>(headers[i]); column.cx = widths[i];
             ListView_InsertColumn(g_dividend_list, i, &column);
@@ -1479,9 +1540,9 @@ LRESULT CALLBACK dividends_window_proc(HWND window, UINT message, WPARAM wparam,
     }
     case WM_SIZE: {
         const int width = LOWORD(lparam), height = HIWORD(lparam);
-        if (g_dividend_info) MoveWindow(g_dividend_info, 12, 10, width - 185, 68, TRUE);
+        if (g_dividend_info) MoveWindow(g_dividend_info, 12, 10, width - 185, 92, TRUE);
         if (g_dividend_refresh) MoveWindow(g_dividend_refresh, width - 172, 8, 160, 28, TRUE);
-        if (g_dividend_list) MoveWindow(g_dividend_list, 12, 86, width - 24, std::clamp(height / 4, 150, 195), TRUE);
+        if (g_dividend_list) MoveWindow(g_dividend_list, 12, 110, width - 24, 165, TRUE);
         if (g_dividend_chart_tabs) MoveWindow(g_dividend_chart_tabs, 12, 289, width - 315, 30, TRUE);
         if (g_dividend_chart_range) MoveWindow(g_dividend_chart_range, width - 292, 289, 280, 180, TRUE);
         InvalidateRect(window, nullptr, TRUE);
@@ -1498,6 +1559,17 @@ LRESULT CALLBACK dividends_window_proc(HWND window, UINT message, WPARAM wparam,
         break;
     case WM_NOTIFY: {
         const auto* notice = reinterpret_cast<const NMHDR*>(lparam);
+        if (notice->idFrom == ID_DIVIDENDS_LIST && notice->code == NM_DBLCLK) {
+            const auto* click = reinterpret_cast<const NMITEMACTIVATE*>(lparam);
+            if (g_dividend_instrument < g_items.size() && click->iItem >= 0 &&
+                static_cast<std::size_t>(click->iItem) < g_items[g_dividend_instrument].dividends.size()) {
+                const auto& event = g_items[g_dividend_instrument].dividends[static_cast<std::size_t>(click->iItem)];
+                const auto& url = click->iSubItem == 8 ? event.issuer_url : event.source_url;
+                if (url.starts_with("https://smart-lab.ru/") || url.starts_with("https://lukoil.ru/"))
+                    ShellExecuteW(window, L"open", widen(url).c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+            }
+            return 0;
+        }
         if (notice->idFrom == ID_DIV_CHART_TABS && notice->code == TCN_SELCHANGE) {
             g_dividend_chart_panel = static_cast<ChartPanel>(std::clamp(TabCtrl_GetCurSel(g_dividend_chart_tabs), 0, 3));
             InvalidateRect(window, nullptr, TRUE); return 0;
@@ -1517,16 +1589,15 @@ LRESULT CALLBACK dividends_window_proc(HWND window, UINT message, WPARAM wparam,
                 it->dividends = std::move(result->events);
                 it->dividends_stale = false;
                 it->dividends_checked_at = std::move(result->checked_at);
+                it->dividend_note = std::move(result->note);
+                try { save_dividend_cache(*it); }
+                catch (const std::exception& ex) { it->dividend_note += " | " + std::string(ex.what()); }
             } else it->dividends_stale = true;
             if (is_current) {
                 g_dividend_instrument = static_cast<std::size_t>(it - g_items.begin());
                 fill_dividend_list();
                 InvalidateRect(window, nullptr, TRUE);
             }
-        }
-        if (g_dividend_info && is_current && !it->dividend_error.empty()) {
-            const std::wstring error = widen("Ошибка загрузки: " + it->dividend_error + " | показаны сохранённые данные, если они есть.");
-            SetWindowTextW(g_dividend_info, error.c_str());
         }
         return 0;
     }
@@ -1559,6 +1630,7 @@ void open_dividends_window() {
         return;
     }
     g_dividend_instrument = static_cast<std::size_t>(selected);
+    load_dividend_cache(g_items[g_dividend_instrument]);
     if (g_dividend_window) {
         SetWindowLongPtrW(g_dividend_window, GWLP_USERDATA, static_cast<LONG_PTR>(g_dividend_instrument));
         SetWindowTextW(g_dividend_window, (L"Дивидендная аналитика — " + widen(g_items[g_dividend_instrument].ticker)).c_str());
@@ -2008,6 +2080,7 @@ LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lp
                 fetched.dividends = std::move(it->dividends);
                 fetched.dividend_error = std::move(it->dividend_error);
                 fetched.dividends_checked_at = std::move(it->dividends_checked_at);
+                fetched.dividend_note = std::move(it->dividend_note);
                 fetched.dividends_stale = it->dividends_stale;
                 *it = std::move(fetched);
                 it->target = current_target;
@@ -2066,7 +2139,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
     dividend_wc.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_WINDOW + 1);
     dividend_wc.lpszClassName = L"MOEXWatchDividendWindow";
     if (!RegisterClassExW(&dividend_wc)) return 1;
-    HWND window = CreateWindowExW(0, wc.lpszClassName, L"MOEX Watch 0.5.1 — аналитика и портфель", WS_OVERLAPPEDWINDOW,
+    HWND window = CreateWindowExW(0, wc.lpszClassName, L"MOEX Watch 0.5.2 — аналитика и портфель", WS_OVERLAPPEDWINDOW,
                                   CW_USEDEFAULT, CW_USEDEFAULT, 1340, 870, nullptr, nullptr, instance, nullptr);
     if (!window) return 2;
     ShowWindow(window, show); UpdateWindow(window);

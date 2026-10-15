@@ -161,7 +161,9 @@ std::vector<DividendEvent> parse_dividends_csv(std::string_view csv) {
         const std::string normalized_date = date->substr(0, 10);
         if (normalized_date[4] != '-' || normalized_date[7] != '-') continue;
         const std::string currency_code = upper(trim(field(rows[i], currency).value_or("")));
-        events.push_back({normalized_date, *value, currency_code});
+        DividendEvent event;
+        event.record_date = normalized_date; event.amount_per_share = *value; event.currency = currency_code;
+        events.push_back(std::move(event));
     }
     std::stable_sort(events.begin(), events.end(), [](const auto& left, const auto& right) {
         return left.record_date < right.record_date;
