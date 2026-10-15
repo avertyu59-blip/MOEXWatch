@@ -6,12 +6,6 @@ if ($releases.Count -eq 0) { return }
 $repository = $env:GITHUB_REPOSITORY
 $runRoot = Join-Path $env:RUNNER_TEMP "moexwatch-releases-$($env:GITHUB_RUN_ID)-$($env:GITHUB_RUN_ATTEMPT)"
 New-Item -ItemType Directory -Path $runRoot -Force | Out-Null
-$vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
-$visualStudio = (& $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath | Select-Object -First 1)
-if ($LASTEXITCODE -ne 0 -or -not $visualStudio) { throw 'MSVC installation not found.' }
-$runtime = Get-ChildItem (Join-Path $visualStudio 'VC\Redist\MSVC\*\x64\Microsoft.VC143.CRT') -Directory |
-    Sort-Object FullName -Descending | Select-Object -First 1
-if (-not $runtime) { throw 'MSVC x64 redistributable runtime not found.' }
 
 foreach ($release in $releases) {
     $version = [string]$release.version
@@ -28,7 +22,7 @@ foreach ($release in $releases) {
     if ($LASTEXITCODE -ne 0) { throw "Checkout failed for $version" }
     $actualVersion = (Get-Content (Join-Path $sourceDir 'VERSION.txt') -Raw).Trim()
     if ($actualVersion -ne $version) { throw "VERSION.txt mismatch for $version" }
-    cmake -S $sourceDir -B $buildDir -G 'Visual Studio 17 2022' -A x64
+    cmake -S $sourceDir -B $buildDir -G 'Visual Studio 17 2022' -A x64 '-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded'
     if ($LASTEXITCODE -ne 0) { throw "CMake configure failed for $version" }
     cmake --build $buildDir --config Release
     if ($LASTEXITCODE -ne 0) { throw "Build failed for $version" }
@@ -39,7 +33,6 @@ foreach ($release in $releases) {
     Copy-Item (Join-Path $buildDir 'Release\moexwatch.exe') (Join-Path $packageDir 'MOEXWatch.exe')
     Copy-Item (Join-Path $sourceDir 'README.md') $packageDir
     Copy-Item (Join-Path $sourceDir 'VERSION.txt') $packageDir
-    Copy-Item (Join-Path $runtime.FullName '*.dll') $packageDir
     $binaryZip = Join-Path $runRoot "MOEXWatch-$version-Windows-x64.zip"
     $sourceZip = Join-Path $runRoot "MOEXWatch-$version-source.zip"
     Compress-Archive -Path (Join-Path $packageDir '*') -DestinationPath $binaryZip
@@ -60,7 +53,7 @@ $($release.summary)
 
 ### Скачать и запустить
 
-- **MOEXWatch-$version-Windows-x64.zip** — готовое приложение и библиотеки MSVC. Распакуйте архив и запустите **MOEXWatch.exe**. Сборка на компьютере пользователя не нужна.
+- **MOEXWatch-$version-Windows-x64.zip** — готовое приложение со встроенной средой выполнения MSVC. Распакуйте архив и запустите **MOEXWatch.exe**. Сборка на компьютере пользователя не нужна.
 - **MOEXWatch-$version-source.zip** — исходники этой версии.
 - **MOEXWatch-$version-SHA256SUMS.txt** — контрольные суммы архивов.
 
