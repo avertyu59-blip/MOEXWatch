@@ -877,10 +877,7 @@ HWND create_chart_tabs(HWND parent, int id, int x, int y, int width) {
     if (g_font) SendMessageW(tabs, WM_SETFONT, reinterpret_cast<WPARAM>(g_font), TRUE);
     const wchar_t* names[] = {L"Цена", L"Сравнение с IMOEX", L"Объёмы", L"RSI"};
     for (int i = 0; i < 4; ++i) {
-        g_backup_button=CreateWindowExW(0,L"BUTTON",L"Резервная копия",WS_CHILD|WS_VISIBLE|BS_PUSHBUTTON,
-        1150,9,155,28,window,reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_BACKUP)),GetModuleHandleW(nullptr),nullptr);
-    if(g_font)SendMessageW(g_backup_button,WM_SETFONT,reinterpret_cast<WPARAM>(g_font),TRUE);
-    TCITEMW tab{}; tab.mask = TCIF_TEXT; tab.pszText = const_cast<wchar_t*>(names[i]);
+        TCITEMW tab{}; tab.mask = TCIF_TEXT; tab.pszText = const_cast<wchar_t*>(names[i]);
         TabCtrl_InsertItem(tabs, i, &tab);
     }
     TabCtrl_SetCurSel(tabs, 0);
@@ -1386,6 +1383,9 @@ void create_controls(HWND window) {
                          OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI");
     g_tabs = CreateWindowExW(0, WC_TABCONTROLW, L"", WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS,
                             16, 8, 400, 34, window, reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_TABS)), GetModuleHandleW(nullptr), nullptr);
+    g_backup_button=CreateWindowExW(0,L"BUTTON",L"Резервная копия",WS_CHILD|WS_VISIBLE|BS_PUSHBUTTON,
+        1150,9,155,28,window,reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_BACKUP)),GetModuleHandleW(nullptr),nullptr);
+    if(g_font)SendMessageW(g_backup_button,WM_SETFONT,reinterpret_cast<WPARAM>(g_font),TRUE);
     TCITEMW tab{}; tab.mask = TCIF_TEXT;
     tab.pszText = const_cast<wchar_t*>(L"Аналитика"); TabCtrl_InsertItem(g_tabs, 0, &tab);
     tab.pszText = const_cast<wchar_t*>(L"Закрытые сделки"); TabCtrl_InsertItem(g_tabs, 1, &tab);

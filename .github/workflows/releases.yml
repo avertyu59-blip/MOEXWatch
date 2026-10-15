@@ -6,6 +6,10 @@ on:
     tags: ["v[0-9]*"]
     paths:
       - "VERSION.txt"
+      - "CMakeLists.txt"
+      - "src/**"
+      - "include/**"
+      - "tests/**"
       - ".github/workflows/releases.yml"
       - ".github/scripts/publish-releases.ps1"
       - ".github/release-history.json"
