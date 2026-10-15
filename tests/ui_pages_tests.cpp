@@ -68,5 +68,34 @@ int main(){try{
     app.activate_page(5);app.activate_page(3);
     check(app.signals_page.history.size()==1,"history survives tab switching");
     check(!app.command_signals(MAKEWPARAM(ID_PORT_ADD,0)),"signal page leaves unrelated commands alone");
-    std::cout<<"ui_pages_tests: backtest and signal checks passed\n";
+    SendMessageW(app.portfolio_page.ticker,CB_ADDSTRING,0,reinterpret_cast<LPARAM>(L"SBER"));
+    SendMessageW(app.portfolio_page.ticker,CB_SETCURSEL,0,0);
+    const auto enter=[&](const wchar_t* quantity,const wchar_t* price,int side){
+        SetWindowTextW(app.portfolio_page.date,L"2026-10-15");
+        SetWindowTextW(app.portfolio_page.quantity,quantity);
+        SetWindowTextW(app.portfolio_page.price,price);
+        SetWindowTextW(app.portfolio_page.commission,L"0");
+        SendMessageW(app.portfolio_page.side,CB_SETCURSEL,static_cast<WPARAM>(side),0);
+        check(app.command_portfolio(MAKEWPARAM(ID_PORT_ADD,0)),"portfolio handles add operation command");
+    };
+    enter(L"10",L"100",0);enter(L"10",L"200",0);enter(L"5",L"180",1);
+    const auto position=app.open_position_for_ticker("SBER");
+    check(position&&position->quantity==15&&position->average_entry_price==150&&position->realized_profit==150,"UI operations preserve averaging and partial sale calculations");
+    check(ListView_GetItemCount(app.portfolio_page.positions)==1&&ListView_GetItemCount(app.portfolio_page.transactions_list)==3,"positions and operation rows refresh together");
+    ListView_SetItemState(app.portfolio_page.positions,0,LVIS_SELECTED,LVIS_SELECTED);
+    SetWindowTextW(app.portfolio_page.position_stop,L"110");SetWindowTextW(app.portfolio_page.position_take,L"210");
+    check(app.command_portfolio(MAKEWPARAM(ID_POSITION_LEVELS_SAVE,0)),"portfolio handles save levels command");
+    const auto* levels=app.levels_for_position("SBER",position->opened_on);
+    check(levels&&levels->stop_loss==110&&levels->take_profit==210,"levels remain tied to selected open position");
+    app.app_table_sorts[ID_PORT_TRANSACTIONS]={4,false};app.apply_table_sort(app.portfolio_page.transactions_list,ID_PORT_TRANSACTIONS);
+    check(row_data(app.portfolio_page.transactions_list,0)==1,"highest-priced purchase moves to first displayed row");
+    ListView_SetItemState(app.portfolio_page.transactions_list,0,LVIS_SELECTED,LVIS_SELECTED);
+    check(app.command_portfolio(MAKEWPARAM(ID_PORT_DELETE,0)),"portfolio handles deletion command");
+    check(app.portfolio_page.transactions.size()==2&&app.portfolio_page.transactions[0].price==100&&app.portfolio_page.transactions[1].side==PortfolioSide::Sell,"delete after sorting removes selected model operation");
+    app.resize_portfolio(1164,720);app.activate_page(2);app.activate_page(0);app.activate_page(2);
+    check(app.portfolio_page.transactions.size()==2&&ListView_GetItemCount(app.portfolio_page.transactions_list)==2,"portfolio survives resizing and tab switching");
+    const auto journal=relative(app.portfolio_page.transactions_list,app.app_window);
+    check(journal.right<=1164&&journal.bottom<=720,"operation table fits minimum client size");
+    check(!app.command_portfolio(MAKEWPARAM(ID_BACKTEST_RUN,0)),"portfolio leaves backtest commands alone");
+    std::cout<<"ui_pages_tests: backtest, signals and portfolio checks passed\n";
 }catch(const std::exception& ex){std::cerr<<ex.what()<<'\n';return 1;}}
