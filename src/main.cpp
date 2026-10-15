@@ -2,6 +2,8 @@
 #include "app_models.hpp"
 #include "storage.hpp"
 #include "market_data.hpp"
+#include "portfolio_csv.hpp"
+#include "portfolio_import_ui.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -24,6 +26,8 @@
 #ifdef _WIN32
 #include <windows.h>
 #include <commctrl.h>
+#include <commdlg.h>
+#include <cwctype>
 #include <shellapi.h>
 
 using namespace moexwatch;
@@ -34,7 +38,7 @@ constexpr UINT WM_FETCH_PROGRESS = WM_APP + 11;
 constexpr UINT WM_BACKTEST_READY = WM_APP + 12;
 constexpr UINT WM_DIVIDENDS_READY = WM_APP + 13;
 constexpr UINT WM_BACKUP_READY = WM_APP + 14;
-constexpr int ID_BACKUP = 1060;
+constexpr int ID_BACKUP = 1060, ID_PORT_IMPORT = 1061, ID_PORT_EXPORT = 1062;
 constexpr int ID_TICKER = 1001, ID_TARGET = 1002, ID_ADD = 1003, ID_TARGET_SET = 1004,
               ID_REMOVE = 1005, ID_REFRESH = 1006, ID_LIST = 1007, ID_FILTER = 1008, ID_RANGE = 1009;
 constexpr int ID_TABS = 1010, ID_TRADE_TICKER = 1011, ID_TRADE_QUANTITY = 1012,
@@ -452,6 +456,12 @@ void fill_portfolio() {
         });
         if (g_position_levels.size() != old_size) save_position_levels();
     }
+    const bool allocation_fresh = portfolio && portfolio->priced_positions == portfolio->open_positions &&
+        std::all_of(portfolio->positions.begin(),portfolio->positions.end(),[](const auto& position) {
+            if(position.quantity<=0.0)return true;
+            const auto source=std::find_if(g_items.begin(),g_items.end(),[&](const auto& item){return item.ticker==position.ticker;});
+            return source!=g_items.end() && !source->quote_stale;
+        });
     std::size_t row_index = 0;
     if (portfolio) {
         for (const auto& position : portfolio->positions) {
@@ -466,11 +476,12 @@ void fill_portfolio() {
             const std::string values[] = {money(position.quantity), money(position.average_entry_price),
                 position.current_price ? money(*position.current_price) + (stale ? " *" : "") : "—",
                 position.market_value ? money(*position.market_value) : "—",
+                percent(portfolio_weight(*portfolio,position,allocation_fresh)),
                 position.unrealized_profit ? money(*position.unrealized_profit) : "—",
                 percent(position.unrealized_percent), money(position.realized_profit),
                 levels && levels->stop_loss ? money(*levels->stop_loss) : "—",
                 levels && levels->take_profit ? money(*levels->take_profit) : "—"};
-            for (int col = 1; col <= 9; ++col) {
+            for (int col = 1; col <= 10; ++col) {
                 auto wide = widen(values[col - 1]); ListView_SetItemText(g_port_positions, static_cast<int>(row_index), col, wide.data());
             }
             ++row_index;
@@ -493,9 +504,9 @@ void fill_portfolio() {
     }
     const auto summary = L"Открытых позиций: " + std::to_wstring(portfolio->open_positions) +
         L"   Котировки: " + std::to_wstring(portfolio->priced_positions) + L"/" + std::to_wstring(portfolio->open_positions) +
-        L"   Стоимость: " + widen(money(portfolio->total_market_value)) + L" ₽" +
+        (allocation_fresh ? L"   Стоимость: " : L"   Стоимость оценённых позиций*: ") + widen(money(portfolio->total_market_value)) + L" ₽" +
         L"   Бумажная прибыль: " + widen(money(portfolio->total_unrealized_profit)) + L" ₽" +
-        L"   Зафиксировано: " + widen(money(portfolio->total_realized_profit)) + L" ₽ (* — устаревшая цена)";
+        L"   Зафиксировано: " + widen(money(portfolio->total_realized_profit)) + (allocation_fresh ? L" ₽" : L" ₽ (* — неполная/устаревшая оценка; доли н/д)");
     SetWindowTextW(g_port_summary, summary.c_str());
 }
 
@@ -1378,6 +1389,53 @@ void start_backup() {
     }).detach();
 }
 
+std::optional<std::filesystem::path> select_operations_csv(bool save) {
+    std::vector<wchar_t> buffer(32768,L'\0');
+    if(save) { const std::wstring name=L"MOEXWatch-operations.csv"; std::copy(name.begin(),name.end(),buffer.begin()); }
+    OPENFILENAMEW dialog{};dialog.lStructSize=sizeof(dialog);dialog.hwndOwner=g_window;
+    dialog.lpstrFilter=L"CSV UTF-8 (*.csv)\0*.csv\0Все файлы (*.*)\0*.*\0";
+    dialog.lpstrFile=buffer.data();dialog.nMaxFile=static_cast<DWORD>(buffer.size());dialog.lpstrDefExt=L"csv";
+    dialog.lpstrTitle=save?L"Экспорт операций портфеля":L"Выберите CSV операций для просмотра";
+    dialog.Flags=OFN_EXPLORER|OFN_NOCHANGEDIR|OFN_PATHMUSTEXIST|(save?OFN_OVERWRITEPROMPT:OFN_FILEMUSTEXIST);
+    const BOOL ok=save?GetSaveFileNameW(&dialog):GetOpenFileNameW(&dialog);
+    if(!ok){if(CommDlgExtendedError()!=0)throw std::runtime_error("Не удалось открыть диалог выбора файла");return {};}
+    return std::filesystem::path(buffer.data());
+}
+
+void export_portfolio_operations() {
+    try {
+        if(g_storage_blocked)throw std::runtime_error("Сначала устраните ошибку загрузки журналов, чтобы не экспортировать неполный портфель");
+        const auto path=select_operations_csv(true);if(!path)return;
+        auto target=std::filesystem::weakly_canonical(*path).wstring();
+        auto root=std::filesystem::weakly_canonical(storage::data_directory()).wstring();
+        const auto lowercase=[](std::wstring& value){for(auto& c:value)c=static_cast<wchar_t>(std::towlower(c));};lowercase(target);lowercase(root);
+        if(target==root || target.starts_with(root+L"\\"))throw std::runtime_error("Выберите папку вне APPDATA/MOEXWatch: экспорт не должен заменять рабочие данные или резервные копии");
+        storage::atomic_write(*path,export_portfolio_csv(g_portfolio_transactions));
+        MessageBoxW(g_window,(L"Операции экспортированы:\n"+path->wstring()+L"\nФормат: CSV UTF-8, разделитель ;, количество указано в акциях.").c_str(),L"Экспорт CSV",MB_ICONINFORMATION);
+    }catch(const std::exception& ex){MessageBoxW(g_window,widen(ex.what()).c_str(),L"Экспорт не выполнен",MB_ICONERROR);}
+}
+
+void import_portfolio_operations() {
+    try {
+        if(g_storage_blocked)throw std::runtime_error("Сначала устраните ошибку хранения пользовательских данных");
+        const auto path=select_operations_csv(false);if(!path)return;
+        const auto csv=storage::read_text(*path);if(!csv)throw std::runtime_error("CSV-файл не найден");
+        // Synchronize existing state without changing its content before opening a preview.
+        save_watchlist();save_trades();save_portfolio();save_position_levels();save_signal_settings();
+        if(g_storage_blocked)throw std::runtime_error("Не удалось сохранить текущие записи; импорт отменён");
+        const auto root=storage::data_directory();const auto original=storage::read_text(root/"portfolio_transactions.csv");
+        std::filesystem::path backup;
+        const bool imported=review_portfolio_import(g_window,g_font,*csv,g_portfolio_transactions,[&](const auto& candidate){
+            if(storage::read_text(root/"portfolio_transactions.csv")!=original)throw std::runtime_error("Журнал изменился после открытия просмотра. Закройте окно и повторите импорт.");
+            backup=storage::create_backup(root);
+            if(storage::read_text(root/"portfolio_transactions.csv")!=original)throw std::runtime_error("Журнал изменился во время резервирования. Повторите импорт.");
+            storage::save_portfolio(root,candidate);
+            g_portfolio_transactions=candidate;
+        });
+        if(imported){fill_portfolio();MessageBoxW(g_window,(L"Операции добавлены. Исходные данные сохранены:\n"+backup.wstring()+L"\nДля котировок новых тикеров добавьте их в список наблюдения.").c_str(),L"Импорт завершён",MB_ICONINFORMATION);}
+    }catch(const std::exception& ex){MessageBoxW(g_window,widen(ex.what()).c_str(),L"Импорт не выполнен",MB_ICONERROR);}
+}
+
 void create_controls(HWND window) {
     g_font = CreateFontW(-17, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
                          OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI");
@@ -1501,6 +1559,8 @@ void create_controls(HWND window) {
         435, 95, 155, 28, window, reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_PORT_ADD)), GetModuleHandleW(nullptr), nullptr);
     if (g_font) SendMessageW(g_port_add, WM_SETFONT, reinterpret_cast<WPARAM>(g_font), TRUE);
     g_portfolio_controls.push_back(g_port_add);
+    add_control(window,L"BUTTON",L"Импорт CSV",BS_PUSHBUTTON,620,95,125,28,ID_PORT_IMPORT);
+    add_control(window,L"BUTTON",L"Экспорт CSV",BS_PUSHBUTTON,758,95,125,28,ID_PORT_EXPORT);
     add_control(window, L"STATIC", L"Тикер выбирается из списка наблюдения. В себестоимость покупки включается комиссия; продажа списывается по средней цене.",
         0, 16, 132, 1220, 22, 0);
     g_port_summary = CreateWindowExW(0, L"STATIC", L"", WS_CHILD | WS_VISIBLE | SS_LEFT, 16, 157, 1240, 24, window,
@@ -1511,9 +1571,9 @@ void create_controls(HWND window) {
         16, 185, 1260, 220, window, reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_PORT_POSITIONS)), GetModuleHandleW(nullptr), nullptr);
     g_portfolio_controls.push_back(g_port_positions);
     ListView_SetExtendedListViewStyle(g_port_positions, LVS_EX_FULLROWSELECT | LVS_EX_GRIDLINES | LVS_EX_DOUBLEBUFFER);
-    const wchar_t* position_headers[] = {L"Тикер",L"Акций",L"Средняя, ₽",L"Котировка, ₽",L"Стоимость, ₽",L"Бумажная прибыль, ₽",L"Бумажная, %",L"Зафиксировано, ₽",L"Стоп-лосс, ₽",L"Тейк-профит, ₽"};
-    const int position_widths[] = {75,80,105,110,115,155,100,145,110,125};
-    for (int i=0;i<10;++i) { LVCOLUMNW col{}; col.mask=LVCF_TEXT|LVCF_WIDTH; col.pszText=const_cast<wchar_t*>(position_headers[i]); col.cx=position_widths[i]; ListView_InsertColumn(g_port_positions,i,&col); }
+    const wchar_t* position_headers[] = {L"Тикер",L"Акций",L"Средняя, ₽",L"Котировка, ₽",L"Стоимость, ₽",L"Доля, %",L"Бумажная прибыль, ₽",L"Бумажная, %",L"Зафиксировано, ₽",L"Стоп-лосс, ₽",L"Тейк-профит, ₽"};
+    const int position_widths[] = {75,80,105,110,115,90,155,100,145,110,125};
+    for (int i=0;i<11;++i) { LVCOLUMNW col{}; col.mask=LVCF_TEXT|LVCF_WIDTH; col.pszText=const_cast<wchar_t*>(position_headers[i]); col.cx=position_widths[i]; ListView_InsertColumn(g_port_positions,i,&col); }
     add_control(window, L"STATIC", L"Стоп-лосс, ₽", 0, 16, 418, 105, 24, 0);
     add_control(window, L"EDIT", L"", WS_BORDER | ES_AUTOHSCROLL, 121, 414, 110, 28, ID_POSITION_STOP);
     g_position_stop = GetDlgItem(window, ID_POSITION_STOP);
@@ -1656,6 +1716,8 @@ LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lp
         case ID_TRADE_DELETE: delete_trade(); return 0;
         case ID_BACKTEST_RUN: start_backtest(); return 0;
         case ID_PORT_ADD: add_portfolio_transaction(); return 0;
+        case ID_PORT_IMPORT: import_portfolio_operations(); return 0;
+        case ID_PORT_EXPORT: export_portfolio_operations(); return 0;
         case ID_PORT_DELETE: delete_portfolio_transaction(); return 0;
         case ID_POSITION_LEVELS_SAVE: save_selected_position_levels(); return 0;
         case ID_SIG_SAVE:
@@ -1794,7 +1856,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
     dividend_wc.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_WINDOW + 1);
     dividend_wc.lpszClassName = L"MOEXWatchDividendWindow";
     if (!RegisterClassExW(&dividend_wc)) return 1;
-    HWND window = CreateWindowExW(0, wc.lpszClassName, L"MOEX Watch 0.6.0 — аналитика и портфель", WS_OVERLAPPEDWINDOW,
+    HWND window = CreateWindowExW(0, wc.lpszClassName, L"MOEX Watch 0.6.1 — аналитика и портфель", WS_OVERLAPPEDWINDOW,
                                   CW_USEDEFAULT, CW_USEDEFAULT, 1340, 870, nullptr, nullptr, instance, nullptr);
     if (!window) return 2;
     ShowWindow(window, show); UpdateWindow(window);

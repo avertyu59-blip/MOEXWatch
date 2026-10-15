@@ -112,7 +112,7 @@ void load_trades(const std::filesystem::path& root, std::vector<Trade>& value) {
 
 void save_portfolio(const std::filesystem::path& root, const std::vector<PortfolioTransaction>& value) {
     std::ostringstream out;
-    out << "date;ticker;side;quantity;price;commission\n" << std::setprecision(15);
+    out << "date;ticker;side;quantity;price;commission\n" << std::setprecision(17);
     for (const auto& transaction : value)
         out << transaction.date << ';' << transaction.ticker << ';'
             << (transaction.side == PortfolioSide::Buy ? "BUY" : "SELL") << ';'
@@ -245,7 +245,9 @@ std::optional<std::string> read_text(const std::filesystem::path& path,std::size
 void atomic_write(const std::filesystem::path& path,std::string_view content) {
     std::lock_guard lock(io_mutex);
     std::filesystem::create_directories(path.parent_path());
-    auto temporary=path;temporary += ".tmp";
+    static std::atomic<unsigned> temporary_sequence{};
+    const auto stamp=std::chrono::steady_clock::now().time_since_epoch().count();
+    auto temporary=path;temporary += ".tmp-"+std::to_string(stamp)+"-"+std::to_string(temporary_sequence++);
     try {
         {
             std::ofstream out(temporary,std::ios::binary|std::ios::trunc);
@@ -286,7 +288,7 @@ std::filesystem::path create_backup(const std::filesystem::path& root) {
         }
         if(files.empty())throw std::runtime_error("Нет сохранённых пользовательских файлов для копирования");
         std::ostringstream manifest;
-        manifest<<"MOEXWatch backup 0.6.0\nЗакройте приложение перед восстановлением. Скопируйте файлы из этой папки в APPDATA/MOEXWatch.\nКэш котировок не требуется для восстановления.\n\nfile;bytes\n";
+        manifest<<"MOEXWatch backup 0.6.1\nЗакройте приложение перед восстановлением. Скопируйте файлы из этой папки в APPDATA/MOEXWatch.\nКэш котировок не требуется для восстановления.\n\nfile;bytes\n";
         for(const auto& file:files) {
             if(std::filesystem::is_symlink(file))throw std::runtime_error("Символические ссылки в резервную копию не включаются");
             const auto bytes=read_text(file);

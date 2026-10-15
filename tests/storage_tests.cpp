@@ -20,6 +20,9 @@ int main(){
  try {
  Temp tmp;const auto root=tmp.root;
  check(!st::read_text(root/"missing.csv"),"missing file distinguished from unreadable file");
+ st::atomic_write(root/"export.csv.tmp","unrelated existing file");
+ st::atomic_write(root/"export.csv","new export");
+ check(*st::read_text(root/"export.csv.tmp")=="unrelated existing file","unique temporary names preserve unrelated files beside export");
  st::atomic_write(root/"watchlist.csv","# ticker;target\nSBER;250\nGAZP;\n");
  std::vector<Instrument> instruments;st::load_watchlist(root,instruments);
  check(instruments.size()==2 && instruments[0].target==250,"legacy watchlist preserved");
