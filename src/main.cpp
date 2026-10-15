@@ -1,4 +1,7 @@
 #include "market_core.hpp"
+#include "app_models.hpp"
+#include "storage.hpp"
+#include "market_data.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -22,7 +25,6 @@
 #include <windows.h>
 #include <commctrl.h>
 #include <shellapi.h>
-#include <winhttp.h>
 
 using namespace moexwatch;
 
@@ -31,6 +33,8 @@ constexpr UINT WM_DATA_READY = WM_APP + 10;
 constexpr UINT WM_FETCH_PROGRESS = WM_APP + 11;
 constexpr UINT WM_BACKTEST_READY = WM_APP + 12;
 constexpr UINT WM_DIVIDENDS_READY = WM_APP + 13;
+constexpr UINT WM_BACKUP_READY = WM_APP + 14;
+constexpr int ID_BACKUP = 1060;
 constexpr int ID_TICKER = 1001, ID_TARGET = 1002, ID_ADD = 1003, ID_TARGET_SET = 1004,
               ID_REMOVE = 1005, ID_REFRESH = 1006, ID_LIST = 1007, ID_FILTER = 1008, ID_RANGE = 1009;
 constexpr int ID_TABS = 1010, ID_TRADE_TICKER = 1011, ID_TRADE_QUANTITY = 1012,
@@ -52,36 +56,9 @@ constexpr int ID_DIVIDENDS_OPEN = 1054, ID_DIVIDENDS_LIST = 1055, ID_DIVIDENDS_R
 constexpr int ID_CHART_TABS = 1057, ID_DIV_CHART_TABS = 1058, ID_DIV_CHART_RANGE = 1059;
 constexpr UINT_PTR TIMER_AUTO_REFRESH = 1;
 
-struct Instrument {
-    std::string ticker;
-    std::optional<double> target;
-    Quote quote;
-    std::vector<Candle> candles;
-    std::string error;
-    bool quote_stale{true};
-    bool candles_stale{true};
-    std::vector<DividendEvent> dividends;
-    std::string dividend_error;
-    std::string dividend_note;
-    std::string dividends_checked_at;
-    bool dividends_stale{true};
-};
-
-struct DividendFetchResult {
-    std::string ticker;
-    std::vector<DividendEvent> events;
-    std::string error;
-    std::string checked_at;
-    std::string note;
-};
-
-struct MarketRefreshResult {
-    std::vector<Instrument> instruments;
-    std::vector<Candle> imoex_candles;
-    std::string imoex_error;
-};
 
 HWND g_window{};
+HWND g_backup_button{};
 HWND g_list{};
 HWND g_ticker_edit{};
 HWND g_target_edit{};
@@ -191,124 +168,24 @@ std::wstring read_edit(HWND control) {
     return text;
 }
 
-std::filesystem::path watchlist_path() {
-    const DWORD required = GetEnvironmentVariableW(L"APPDATA", nullptr, 0);
-    std::wstring appdata;
-    if (required > 1) {
-        appdata.resize(required);
-        const DWORD written = GetEnvironmentVariableW(L"APPDATA", appdata.data(), required);
-        if (written > 0 && written < required) appdata.resize(written); else appdata.clear();
-    }
-    const std::filesystem::path folder = (appdata.empty() ? std::filesystem::path(L".") : std::filesystem::path(appdata)) / L"MOEXWatch";
-    std::error_code ec;
-    std::filesystem::create_directories(folder, ec);
-    return folder / L"watchlist.csv";
-}
-
-std::filesystem::path trades_path() {
-    const DWORD required = GetEnvironmentVariableW(L"APPDATA", nullptr, 0);
-    std::wstring appdata;
-    if (required > 1) {
-        appdata.resize(required);
-        const DWORD written = GetEnvironmentVariableW(L"APPDATA", appdata.data(), required);
-        if (written > 0 && written < required) appdata.resize(written); else appdata.clear();
-    }
-    const std::filesystem::path folder = (appdata.empty() ? std::filesystem::path(L".") : std::filesystem::path(appdata)) / L"MOEXWatch";
-    std::error_code ec;
-    std::filesystem::create_directories(folder, ec);
-    return folder / L"trades.csv";
-}
-
-std::filesystem::path portfolio_path() {
-    const DWORD required = GetEnvironmentVariableW(L"APPDATA", nullptr, 0);
-    std::wstring appdata;
-    if (required > 1) {
-        appdata.resize(required);
-        const DWORD written = GetEnvironmentVariableW(L"APPDATA", appdata.data(), required);
-        if (written > 0 && written < required) appdata.resize(written); else appdata.clear();
-    }
-    const std::filesystem::path folder = (appdata.empty() ? std::filesystem::path(L".") : std::filesystem::path(appdata)) / L"MOEXWatch";
-    std::error_code ec;
-    std::filesystem::create_directories(folder, ec);
-    return folder / L"portfolio_transactions.csv";
-}
-
-std::filesystem::path position_levels_path() {
-    const DWORD required = GetEnvironmentVariableW(L"APPDATA", nullptr, 0);
-    std::wstring appdata;
-    if (required > 1) {
-        appdata.resize(required);
-        const DWORD written = GetEnvironmentVariableW(L"APPDATA", appdata.data(), required);
-        if (written > 0 && written < required) appdata.resize(written); else appdata.clear();
-    }
-    const std::filesystem::path folder = (appdata.empty() ? std::filesystem::path(L".") : std::filesystem::path(appdata)) / L"MOEXWatch";
-    std::error_code ec;
-    std::filesystem::create_directories(folder, ec);
-    return folder / L"position_levels.csv";
-}
-
-std::filesystem::path signals_path() {
-    const DWORD required = GetEnvironmentVariableW(L"APPDATA", nullptr, 0);
-    std::wstring appdata;
-    if (required > 1) {
-        appdata.resize(required);
-        const DWORD written = GetEnvironmentVariableW(L"APPDATA", appdata.data(), required);
-        if (written > 0 && written < required) appdata.resize(written); else appdata.clear();
-    }
-    const std::filesystem::path folder = (appdata.empty() ? std::filesystem::path(L".") : std::filesystem::path(appdata)) / L"MOEXWatch";
-    std::error_code ec;
-    std::filesystem::create_directories(folder, ec);
-    return folder / L"signals.ini";
+bool g_storage_blocked{};
+void storage_failure(const char* error) {
+    g_storage_blocked = true;
+    MessageBoxW(g_window, widen(std::string("Ошибка хранения данных: ") + error +
+        "\nСделайте резервную копию. До исправления ошибки автоматическая запись отключена.").c_str(), L"MOEXWatch", MB_ICONERROR);
 }
 
 std::optional<double> parse_finite_number(std::string value);
 
 void save_signal_settings() {
-    std::ofstream out(signals_path(), std::ios::binary | std::ios::trunc);
-    if (!out) return;
-    out << std::setprecision(12)
-        << "rsi_oversold_enabled=" << (g_signal_settings.rsi_oversold_enabled ? 1 : 0) << '\n'
-        << "rsi_oversold_below=" << g_signal_settings.rsi_oversold_below << '\n'
-        << "rsi_overbought_enabled=" << (g_signal_settings.rsi_overbought_enabled ? 1 : 0) << '\n'
-        << "rsi_overbought_above=" << g_signal_settings.rsi_overbought_above << '\n'
-        << "above_sma200_enabled=" << (g_signal_settings.above_sma200_enabled ? 1 : 0) << '\n'
-        << "near_target_enabled=" << (g_signal_settings.near_target_enabled ? 1 : 0) << '\n'
-        << "near_target_percent=" << g_signal_settings.near_target_percent << '\n'
-        << "require_all=" << (g_signal_settings.require_all ? 1 : 0) << '\n'
-        << "notifications_enabled=" << (g_signal_settings.notifications_enabled ? 1 : 0) << '\n'
-        << "auto_refresh_enabled=" << (g_signal_settings.auto_refresh_enabled ? 1 : 0) << '\n'
-        << "auto_refresh_minutes=" << g_signal_settings.auto_refresh_minutes << '\n';
+    if (g_storage_blocked) return;
+    try { storage::save_signal_settings(storage::data_directory(), g_signal_settings); }
+    catch (const std::exception& ex) { storage_failure(ex.what()); }
 }
 
 void load_signal_settings() {
-    std::ifstream in(signals_path(), std::ios::binary);
-    std::string line;
-    while (std::getline(in, line)) {
-        const auto sep = line.find('=');
-        if (sep == std::string::npos) continue;
-        const auto key = line.substr(0, sep), value = line.substr(sep + 1);
-        const bool enabled = value == "1";
-        if (key == "rsi_oversold_enabled") g_signal_settings.rsi_oversold_enabled = enabled;
-        else if (key == "rsi_overbought_enabled") g_signal_settings.rsi_overbought_enabled = enabled;
-        else if (key == "above_sma200_enabled") g_signal_settings.above_sma200_enabled = enabled;
-        else if (key == "near_target_enabled") g_signal_settings.near_target_enabled = enabled;
-        else if (key == "require_all") g_signal_settings.require_all = enabled;
-        else if (key == "notifications_enabled") g_signal_settings.notifications_enabled = enabled;
-        else if (key == "auto_refresh_enabled") g_signal_settings.auto_refresh_enabled = enabled;
-        else if (key == "auto_refresh_minutes") {
-            const auto number = parse_finite_number(value);
-            if (number && std::floor(*number) == *number && (*number == 15 || *number == 30 || *number == 60))
-                g_signal_settings.auto_refresh_minutes = static_cast<int>(*number);
-        }
-        else if (key == "rsi_oversold_below" || key == "rsi_overbought_above" || key == "near_target_percent") {
-            const auto number = parse_finite_number(value);
-            if (!number) continue;
-            if (key == "rsi_oversold_below") g_signal_settings.rsi_oversold_below = *number;
-            else if (key == "rsi_overbought_above") g_signal_settings.rsi_overbought_above = *number;
-            else g_signal_settings.near_target_percent = *number;
-        }
-    }
-    if (!valid_signal_settings(g_signal_settings)) g_signal_settings = SignalSettings{};
+    try { auto loaded = g_signal_settings; storage::load_signal_settings(storage::data_directory(), loaded); g_signal_settings = std::move(loaded); }
+    catch (const std::exception& ex) { storage_failure(ex.what()); }
 }
 
 std::optional<double> parse_finite_number(std::string value) {
@@ -336,94 +213,36 @@ std::string money(double value) {
 }
 
 void save_trades() {
-    std::ofstream out(trades_path(), std::ios::binary | std::ios::trunc);
-    if (!out) return;
-    out << "ticker;quantity;buy_price;sell_price;commission;tax_rate_percent\n";
-    out << std::setprecision(15);
-    for (const auto& trade : g_trades)
-        out << trade.ticker << ';' << trade.quantity << ';' << trade.buy_price << ';' << trade.sell_price << ';'
-            << trade.commission << ';' << trade.tax_rate_percent << '\n';
+    if (g_storage_blocked) return;
+    try { storage::save_trades(storage::data_directory(), g_trades); }
+    catch (const std::exception& ex) { storage_failure(ex.what()); }
 }
 
 void load_trades() {
-    std::ifstream in(trades_path(), std::ios::binary);
-    if (!in) return;
-    const std::string content((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-    const auto rows = parse_csv(content);
-    if (rows.empty() || rows.front().size() < 6 || rows.front()[0] != "ticker") return;
-    for (std::size_t i = 1; i < rows.size(); ++i) {
-        if (rows[i].size() < 6) continue;
-        const auto quantity = parse_finite_number(rows[i][1]);
-        const auto buy = parse_finite_number(rows[i][2]);
-        const auto sell = parse_finite_number(rows[i][3]);
-        const auto commission = parse_finite_number(rows[i][4]);
-        const auto tax = parse_finite_number(rows[i][5]);
-        if (!quantity || !buy || !sell || !commission || !tax) continue;
-        Trade trade{rows[i][0], *quantity, *buy, *sell, *commission, *tax};
-        if (valid_trade(trade)) g_trades.push_back(std::move(trade));
-    }
+    try { auto loaded = g_trades; storage::load_trades(storage::data_directory(), loaded); g_trades = std::move(loaded); }
+    catch (const std::exception& ex) { storage_failure(ex.what()); }
 }
 
 void save_portfolio() {
-    std::ofstream out(portfolio_path(), std::ios::binary | std::ios::trunc);
-    if (!out) return;
-    out << "date;ticker;side;quantity;price;commission\n" << std::setprecision(15);
-    for (const auto& transaction : g_portfolio_transactions)
-        out << transaction.date << ';' << transaction.ticker << ';'
-            << (transaction.side == PortfolioSide::Buy ? "BUY" : "SELL") << ';'
-            << transaction.quantity << ';' << transaction.price << ';' << transaction.commission << '\n';
+    if (g_storage_blocked) return;
+    try { storage::save_portfolio(storage::data_directory(), g_portfolio_transactions); }
+    catch (const std::exception& ex) { storage_failure(ex.what()); }
 }
 
 void load_portfolio() {
-    std::ifstream in(portfolio_path(), std::ios::binary);
-    if (!in) return;
-    const std::string content((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-    const auto rows = parse_csv(content);
-    if (rows.empty() || rows.front().size() < 6 || rows.front()[0] != "date") return;
-    for (std::size_t i = 1; i < rows.size(); ++i) {
-        if (rows[i].size() < 6) continue;
-        const auto quantity = parse_finite_number(rows[i][3]);
-        const auto price = parse_finite_number(rows[i][4]);
-        const auto commission = parse_finite_number(rows[i][5]);
-        if (!quantity || !price || !commission) continue;
-        const auto side = rows[i][2] == "BUY" ? PortfolioSide::Buy :
-            (rows[i][2] == "SELL" ? PortfolioSide::Sell : PortfolioSide::Buy);
-        if (rows[i][2] != "BUY" && rows[i][2] != "SELL") continue;
-        PortfolioTransaction transaction{rows[i][0], rows[i][1], side, *quantity, *price, *commission};
-        if (valid_portfolio_transaction(transaction)) g_portfolio_transactions.push_back(std::move(transaction));
-    }
-    std::stable_sort(g_portfolio_transactions.begin(), g_portfolio_transactions.end(),
-        [](const auto& a, const auto& b) { return a.date < b.date; });
+    try { auto loaded = g_portfolio_transactions; storage::load_portfolio(storage::data_directory(), loaded); g_portfolio_transactions = std::move(loaded); }
+    catch (const std::exception& ex) { storage_failure(ex.what()); }
 }
 
 void save_position_levels() {
-    std::ofstream out(position_levels_path(), std::ios::binary | std::ios::trunc);
-    if (!out) return;
-    out << "ticker;opened_on;stop_loss;take_profit\n" << std::setprecision(15);
-    for (const auto& levels : g_position_levels) {
-        if (!valid_position_levels(levels) || (!levels.stop_loss && !levels.take_profit)) continue;
-        out << levels.ticker << ';' << levels.opened_on << ';';
-        if (levels.stop_loss) out << *levels.stop_loss;
-        out << ';';
-        if (levels.take_profit) out << *levels.take_profit;
-        out << '\n';
-    }
+    if (g_storage_blocked) return;
+    try { storage::save_position_levels(storage::data_directory(), g_position_levels); }
+    catch (const std::exception& ex) { storage_failure(ex.what()); }
 }
 
 void load_position_levels() {
-    std::ifstream in(position_levels_path(), std::ios::binary);
-    if (!in) return;
-    const std::string content((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-    const auto rows = parse_csv(content);
-    if (rows.empty() || rows.front().size() < 4 || rows.front()[0] != "ticker") return;
-    for (std::size_t i = 1; i < rows.size(); ++i) {
-        if (rows[i].size() < 4) continue;
-        const auto stop = rows[i][2].empty() ? std::optional<double>{} : parse_finite_number(rows[i][2]);
-        const auto take = rows[i][3].empty() ? std::optional<double>{} : parse_finite_number(rows[i][3]);
-        if ((!rows[i][2].empty() && !stop) || (!rows[i][3].empty() && !take)) continue;
-        PositionLevels levels{rows[i][0], rows[i][1], stop, take};
-        if (valid_position_levels(levels)) g_position_levels.push_back(std::move(levels));
-    }
+    try { auto loaded = g_position_levels; storage::load_position_levels(storage::data_directory(), loaded); g_position_levels = std::move(loaded); }
+    catch (const std::exception& ex) { storage_failure(ex.what()); }
 }
 
 std::string optional_number(std::optional<double> n) {
@@ -438,206 +257,26 @@ std::string percent(std::optional<double> n) {
 }
 
 void save_watchlist() {
-    std::ofstream out(watchlist_path(), std::ios::binary | std::ios::trunc);
-    if (!out) return;
-    out << "# ticker;target\n";
-    for (const auto& item : g_items) {
-        out << item.ticker << ';';
-        if (item.target) out << std::setprecision(12) << *item.target;
-        out << '\n';
-    }
+    if (g_storage_blocked) return;
+    try { storage::save_watchlist(storage::data_directory(), g_items); }
+    catch (const std::exception& ex) { storage_failure(ex.what()); }
 }
 
 void load_watchlist() {
-    std::ifstream in(watchlist_path(), std::ios::binary);
-    std::string line;
-    while (std::getline(in, line) && g_items.size() < 30) {
-        if (line.empty() || line[0] == '#') continue;
-        const auto sep = line.find(';');
-        std::string ticker = line.substr(0, sep);
-        std::transform(ticker.begin(), ticker.end(), ticker.begin(), [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
-        if (!valid_ticker(ticker) || std::any_of(g_items.begin(), g_items.end(), [&](const auto& x) { return x.ticker == ticker; })) continue;
-        Instrument item; item.ticker = ticker; item.quote.ticker = ticker;
-        if (sep != std::string::npos && sep + 1 < line.size()) {
-            try { const auto target = std::stod(line.substr(sep + 1)); if (target > 0.0) item.target = target; } catch (...) {}
-        }
-        g_items.push_back(std::move(item));
-    }
-    if (g_items.empty()) {
-        for (const char* ticker : {"GAZP", "LKOH", "SBER", "ROSN", "OZON", "T", "YDEX", "NVTK", "SMLT", "VTBR"}) {
-            Instrument item; item.ticker = ticker; item.quote.ticker = ticker; g_items.push_back(std::move(item));
-        }
-        save_watchlist();
-    }
+    try { auto loaded = g_items; storage::load_watchlist(storage::data_directory(), loaded); g_items = std::move(loaded); }
+    catch (const std::exception& ex) { storage_failure(ex.what()); }
 }
 
-struct InternetHandle {
-    HINTERNET value{};
-    ~InternetHandle() { if (value) WinHttpCloseHandle(value); }
-    InternetHandle(const InternetHandle&) = delete;
-    InternetHandle& operator=(const InternetHandle&) = delete;
-    explicit InternetHandle(HINTERNET h = nullptr) : value(h) {}
-};
-
-std::runtime_error network_error(const char* message) {
-    const DWORD code = GetLastError();
-    return std::runtime_error(std::string(message) + " (WinHTTP/Windows " + std::to_string(code) + ")");
-}
-
-std::string https_get(const std::wstring& path, const wchar_t* host = L"iss.moex.com") {
-    InternetHandle session(WinHttpOpen(L"MOEXWatch/0.5.2", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
-                                       WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0));
-    if (!session.value) throw network_error("Не удалось открыть HTTPS-сессию");
-    WinHttpSetTimeouts(session.value, 5000, 5000, 6000, 6000);
-    InternetHandle connection(WinHttpConnect(session.value, host, INTERNET_DEFAULT_HTTPS_PORT, 0));
-    if (!connection.value) throw network_error("Не удалось подключиться к источнику");
-    InternetHandle request(WinHttpOpenRequest(connection.value, L"GET", path.c_str(), nullptr,
-                                               WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE));
-    if (!request.value) throw network_error("Не удалось создать HTTPS-запрос");
-    if (!WinHttpSendRequest(request.value, WINHTTP_NO_ADDITIONAL_HEADERS, 0, WINHTTP_NO_REQUEST_DATA, 0, 0, 0) ||
-        !WinHttpReceiveResponse(request.value, nullptr)) throw network_error("Ошибка HTTPS-запроса");
-    DWORD status = 0, size = sizeof(status);
-    if (!WinHttpQueryHeaders(request.value, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
-                             WINHTTP_HEADER_NAME_BY_INDEX, &status, &size, WINHTTP_NO_HEADER_INDEX) || status < 200 || status >= 300)
-        throw std::runtime_error("Источник ответил HTTP " + std::to_string(status));
-    std::string body;
-    for (;;) {
-        DWORD available = 0;
-        if (!WinHttpQueryDataAvailable(request.value, &available)) throw std::runtime_error("Ошибка чтения HTTPS-ответа");
-        if (available == 0) break;
-        if (body.size() + available > 2U * 1024U * 1024U) throw std::runtime_error("Ответ источника превышает 2 МБ");
-        const auto old_size = body.size();
-        body.resize(old_size + available);
-        DWORD received = 0;
-        if (!WinHttpReadData(request.value, body.data() + old_size, available, &received)) throw std::runtime_error("Ошибка чтения HTTPS-ответа");
-        body.resize(old_size + received);
-    }
-    return body;
-}
-
-std::string date_from() {
-    const auto day = std::chrono::floor<std::chrono::days>(std::chrono::system_clock::now()) - std::chrono::days{730};
-    const std::chrono::year_month_day ymd{day};
-    std::ostringstream out;
-    out << static_cast<int>(ymd.year()) << '-' << std::setfill('0') << std::setw(2) << static_cast<unsigned>(ymd.month())
-        << '-' << std::setw(2) << static_cast<unsigned>(ymd.day());
-    return out.str();
-}
 
 std::string today_date();
 
-std::string local_timestamp() {
-    SYSTEMTIME time{}; GetLocalTime(&time); std::ostringstream out;
-    out << time.wYear << '-' << std::setfill('0') << std::setw(2) << time.wMonth << '-'
-        << std::setw(2) << time.wDay << ' ' << std::setw(2) << time.wHour << ':' << std::setw(2) << time.wMinute;
-    return out.str();
-}
 
-std::filesystem::path dividends_cache_path(std::string_view ticker) {
-    if (!valid_ticker(ticker)) throw std::runtime_error("Некорректный тикер кэша");
-    return watchlist_path().parent_path() / (L"dividends_" + widen(ticker) + L".csv");
-}
 
-void load_dividend_cache(Instrument& item) {
-    if (!item.dividends_checked_at.empty()) return;
-    const auto path = dividends_cache_path(item.ticker);
-    std::error_code ec;
-    const auto size = std::filesystem::file_size(path, ec);
-    if (ec || size > 1024U * 1024U) return;
-    std::ifstream in(path, std::ios::binary);
-    const std::string csv((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-    const auto saved = parse_dividend_snapshot(csv, item.ticker);
-    if (!saved) { item.dividend_note = "Сохранённый файл повреждён; ожидается загрузка из сети."; return; }
-    item.dividends = saved->events; item.dividends_checked_at = saved->checked_at;
-    item.dividends_stale = true;
-}
 
-void save_dividend_cache(const Instrument& item) {
-    const auto path = dividends_cache_path(item.ticker);
-    auto temporary = path; temporary += L".tmp";
-    {
-        std::ofstream out(temporary, std::ios::binary | std::ios::trunc);
-        const auto data = serialize_dividend_snapshot({item.ticker, item.dividends_checked_at, item.dividends});
-        if (!out || !out.write(data.data(), static_cast<std::streamsize>(data.size())) || !out.flush())
-            throw std::runtime_error("Не удалось сохранить события на диск");
-    }
-    if (!MoveFileExW(temporary.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
-        throw network_error("Не удалось заменить файл сохранённых событий");
-}
 
-void fetch_dividend_events(DividendFetchResult& result) {
-    const auto ticker = result.ticker;
-    const std::string history_url = "https://smart-lab.ru/q/" + ticker + "/dividend/";
-    std::vector<DividendEvent> history, upcoming;
-    // Either page failing is a partial refresh, never a successful empty calendar.
-    // Keep the last complete snapshot instead of erasing cancelled/withdrawn events.
-    history = parse_smartlab_dividends(https_get(L"/q/" + widen(ticker) + L"/dividend/", L"smart-lab.ru"), ticker, history_url);
-    upcoming = parse_smartlab_dividends(https_get(L"/dividends/", L"smart-lab.ru"), ticker, "https://smart-lab.ru/dividends/");
-    merge_dividends(history, upcoming);
-    if (ticker == "LKOH") {
-        const std::string issuer = "https://lukoil.ru/InvestorAndShareholderCenter/Securities/Dividends";
-        try {
-            const auto official = parse_lukoil_dividends(https_get(L"/InvestorAndShareholderCenter/Securities/Dividends", L"lukoil.ru"));
-            reconcile_dividends(history, official, issuer, result.checked_at);
-            result.note = "Сверка: официальная таблица ЛУКОЙЛ (совпадение даты и суммы).";
-        } catch (const std::exception&) {
-            result.note = "Сайт эмитента недоступен либо изменён; сверка не выполнена.";
-            for (auto& e : history) { e.issuer_url = issuer; e.issuer_checked_at = result.checked_at; e.verification = DividendVerification::Unavailable; }
-        }
-    } else result.note = "Автоматическая сверка с эмитентом для этой бумаги пока не подключена.";
-    const auto calendar = moex_calendar_2026();
-    for (auto& e : history) {
-        const auto buy = dividend_last_buy(e.record_date, calendar);
-        if (buy) {
-            e.last_buy_date = *buy;
-            e.last_buy_basis = "Расчёт T+1, MOEX 2026: https://www.moex.com/n96571 (сверено 15.10.2026)";
-            if (!e.reported_last_buy.empty() && e.reported_last_buy != *buy)
-                e.last_buy_basis += "; отличается от даты календаря источника";
-        }
-    }
-    result.events = std::move(history);
-}
 
-Instrument fetch_instrument(const Instrument& previous) {
-    Instrument item = previous;
-    item.error.clear();
-    item.quote_stale = true;
-    item.candles_stale = true;
-    const std::wstring base = L"/iss/engines/stock/markets/shares/boards/TQBR/securities/" + widen(item.ticker);
-    try {
-        const auto csv = https_get(base + L".csv?iss.meta=on&iss.only=marketdata&marketdata.columns=SECID,LAST,LASTCHANGEPRCNT,UPDATETIME&iss.delimiter=%3B&iss.dp=point&lang=en");
-        const auto quote = parse_quote_csv(csv, item.ticker);
-        if (quote) { item.quote = *quote; item.quote_stale = !quote->last.has_value(); }
-        else item.error = "Котировки: формат CSV не распознан";
-        if (quote && !quote->last) item.error = "MOEX не вернул цену последней сделки";
-    } catch (const std::exception& ex) { item.error = std::string("Котировки: ") + ex.what(); }
-    try {
-        std::vector<Candle> candles;
-        bool complete = false;
-        for (std::size_t page = 0; page < 16; ++page) {
-            const auto path = base + L"/candles.csv?from=" + widen(date_from()) + L"&interval=24&iss.meta=on&iss.only=candles&candles.columns=begin,open,high,low,close,volume&iss.delimiter=%3B&iss.dp=point&lang=en&start=" + std::to_wstring(candles.size());
-            const auto csv = https_get(path);
-            if (!has_candle_header(csv)) throw std::runtime_error("MOEX: формат страницы истории не распознан");
-            auto batch = parse_candles_csv(csv);
-            if (batch.empty()) { complete = true; break; }
-            if (!candles.empty() && batch.front().date <= candles.back().date)
-                throw std::runtime_error("MOEX повторил страницу истории");
-            candles.insert(candles.end(), batch.begin(), batch.end());
-        }
-        if (!complete) throw std::runtime_error("История превышает лимит страниц");
-        if (!candles.empty()) { item.candles = std::move(candles); item.candles_stale = false; }
-        else {
-            if (!item.error.empty()) item.error += "; ";
-            item.error += "MOEX не вернул дневные свечи";
-        }
-    } catch (const std::exception& ex) {
-        if (!item.error.empty()) item.error += "; ";
-        item.error += std::string("График: ") + ex.what();
-    }
-    return item;
-}
 
-std::vector<Candle> fetch_index_candles();
+
 
 void refresh_data() {
     bool expected = false;
@@ -666,7 +305,7 @@ void refresh_data() {
 }
 
 std::string status_for(const Instrument& item) {
-    if (!item.quote.last) return item.error.empty() ? "Нет котировки" : "Ошибка данных";
+    if (!item.quote.last) return !item.candles.empty() && item.candles_stale ? "График из кэша; нет котировки" : (item.error.empty() ? "Нет котировки" : "Ошибка данных");
     if (item.quote_stale) return "Котировка устарела";
     if (item.target && *item.quote.last <= *item.target) return "Целевая цена достигнута";
     if (item.candles.empty()) return "Нет истории";
@@ -732,7 +371,8 @@ void update_analysis() {
          << "Тренд по дневному закрытию: " << (a.sma200 ? (item.candles.back().close > *a.sma200 ? "выше SMA200" : "ниже/равно SMA200") : "для SMA200 нужны 200 сессий") << "\r\n"
          << "Индикаторы: " << a.technical_note << "\r\n"
          << "Котировка: " << (item.quote_stale ? "устарела или недоступна" : (item.quote.updated_at.empty() ? "время обновления не указано" : item.quote.updated_at))
-         << "  |  график: " << (item.candles_stale ? "не обновлён" : "обновлён")
+         << "  |  график: " << (item.candles_stale ? "сохранённый / не обновлён" : "обновлён")
+         << (item.candles_checked_at.empty() ? "" : " " + item.candles_checked_at)
          << "  |  свечей: " << item.candles.size();
     if (!item.error.empty()) text << "\r\nСтатус источника: " << item.error;
     if (!g_imoex_error.empty()) text << "\r\nИстория IMOEX: " << g_imoex_error;
@@ -1237,7 +877,10 @@ HWND create_chart_tabs(HWND parent, int id, int x, int y, int width) {
     if (g_font) SendMessageW(tabs, WM_SETFONT, reinterpret_cast<WPARAM>(g_font), TRUE);
     const wchar_t* names[] = {L"Цена", L"Сравнение с IMOEX", L"Объёмы", L"RSI"};
     for (int i = 0; i < 4; ++i) {
-        TCITEMW tab{}; tab.mask = TCIF_TEXT; tab.pszText = const_cast<wchar_t*>(names[i]);
+        g_backup_button=CreateWindowExW(0,L"BUTTON",L"Резервная копия",WS_CHILD|WS_VISIBLE|BS_PUSHBUTTON,
+        1150,9,155,28,window,reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_BACKUP)),GetModuleHandleW(nullptr),nullptr);
+    if(g_font)SendMessageW(g_backup_button,WM_SETFONT,reinterpret_cast<WPARAM>(g_font),TRUE);
+    TCITEMW tab{}; tab.mask = TCIF_TEXT; tab.pszText = const_cast<wchar_t*>(names[i]);
         TabCtrl_InsertItem(tabs, i, &tab);
     }
     TabCtrl_SetCurSel(tabs, 0);
@@ -1539,7 +1182,7 @@ LRESULT CALLBACK dividends_window_proc(HWND window, UINT message, WPARAM wparam,
         return 0;
     }
     case WM_SIZE: {
-        const int width = LOWORD(lparam), height = HIWORD(lparam);
+        const int width = LOWORD(lparam);
         if (g_dividend_info) MoveWindow(g_dividend_info, 12, 10, width - 185, 92, TRUE);
         if (g_dividend_refresh) MoveWindow(g_dividend_refresh, width - 172, 8, 160, 28, TRUE);
         if (g_dividend_list) MoveWindow(g_dividend_list, 12, 110, width - 24, 165, TRUE);
@@ -1630,7 +1273,8 @@ void open_dividends_window() {
         return;
     }
     g_dividend_instrument = static_cast<std::size_t>(selected);
-    load_dividend_cache(g_items[g_dividend_instrument]);
+    try { load_dividend_cache(g_items[g_dividend_instrument]); }
+    catch (const std::exception& ex) { g_items[g_dividend_instrument].dividend_note = ex.what(); }
     if (g_dividend_window) {
         SetWindowLongPtrW(g_dividend_window, GWLP_USERDATA, static_cast<LONG_PTR>(g_dividend_instrument));
         SetWindowTextW(g_dividend_window, (L"Дивидендная аналитика — " + widen(g_items[g_dividend_instrument].ticker)).c_str());
@@ -1662,25 +1306,6 @@ void add_control(HWND parent, const wchar_t* type, const wchar_t* caption, DWORD
     }
 }
 
-std::vector<Candle> fetch_index_candles() {
-    const std::wstring base = L"/iss/engines/stock/markets/index/boards/SNDX/securities/IMOEX";
-    std::vector<Candle> candles;
-    bool complete = false;
-    for (std::size_t page = 0; page < 16; ++page) {
-        const auto path = base + L"/candles.csv?from=" + widen(date_from()) +
-            L"&interval=24&iss.meta=on&iss.only=candles&candles.columns=begin,open,high,low,close,volume&iss.delimiter=%3B&iss.dp=point&lang=en&start=" + std::to_wstring(candles.size());
-        const auto csv = https_get(path);
-        if (!has_candle_header(csv)) throw std::runtime_error("MOEX ISS: формат истории IMOEX не распознан");
-        auto batch = parse_candles_csv(csv);
-        if (batch.empty()) { complete = true; break; }
-        if (!candles.empty() && batch.front().date <= candles.back().date)
-            throw std::runtime_error("MOEX ISS повторил страницу истории IMOEX");
-        candles.insert(candles.end(), batch.begin(), batch.end());
-    }
-    if (!complete) throw std::runtime_error("История IMOEX превышает лимит страниц");
-    if (candles.size() < 2) throw std::runtime_error("MOEX ISS не вернул достаточно дневных данных IMOEX");
-    return candles;
-}
 
 struct BacktestUiResult {
     std::string text;
@@ -1736,6 +1361,23 @@ void start_backtest() {
         }
         auto* raw = result.release();
         if (!PostMessageW(target_window, WM_BACKTEST_READY, 0, reinterpret_cast<LPARAM>(raw))) delete raw;
+    }).detach();
+}
+
+struct BackupResult { std::filesystem::path path; std::string error; };
+void start_backup() {
+    if (!IsWindowEnabled(g_backup_button)) return;
+    // Flush the UI-owned state before the worker takes a consistent disk snapshot.
+    // If loading failed, preserve the original files for recovery instead.
+    if (!g_storage_blocked) { save_watchlist(); save_trades(); save_portfolio(); save_position_levels(); save_signal_settings(); }
+    EnableWindow(g_backup_button, FALSE);
+    const HWND target=g_window;
+    std::thread([target] {
+        auto result=std::make_unique<BackupResult>();
+        try { result->path=storage::create_backup(storage::data_directory()); }
+        catch(const std::exception& ex) { result->error=ex.what(); }
+        auto* raw=result.release();
+        if(!PostMessageW(target,WM_BACKUP_READY,0,reinterpret_cast<LPARAM>(raw)))delete raw;
     }).detach();
 }
 
@@ -1970,7 +1612,7 @@ LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lp
     switch (message) {
     case WM_CREATE:
         g_window = window; create_controls(window); load_signal_settings(); synchronize_signal_controls();
-        update_auto_refresh_timer(); load_watchlist(); load_trades(); load_portfolio(); load_position_levels(); fill_list(); fill_trades(); fill_signals(); fill_portfolio();
+        update_auto_refresh_timer(); load_watchlist(); load_trades(); load_portfolio(); load_position_levels(); load_market_cache(g_items, g_imoex_candles, g_imoex_error); fill_list(); fill_trades(); fill_signals(); fill_portfolio();
         for (const auto& item : g_items) {
             SendMessageW(g_backtest_ticker, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(widen(item.ticker).c_str()));
             SendMessageW(g_port_ticker, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(widen(item.ticker).c_str()));
@@ -1980,7 +1622,8 @@ LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lp
         add_notification_icon(); refresh_data(); return 0;
     case WM_SIZE: {
         const int width = LOWORD(lparam), height = HIWORD(lparam);
-        if (g_tabs) MoveWindow(g_tabs, 16, 8, width - 32, 34, TRUE);
+        if (g_tabs) MoveWindow(g_tabs, 16, 8, width - 195, 34, TRUE);
+        if(g_backup_button)MoveWindow(g_backup_button, width-171, 9, 155, 28, TRUE);
         if (g_list) MoveWindow(g_list, 16, 184, std::max(360, width * 44 / 100), height - 204, TRUE);
         if (g_analysis) MoveWindow(g_analysis, width * 46 / 100, 184, width * 52 / 100 - 16, 245, TRUE);
         if (g_chart_tabs) MoveWindow(g_chart_tabs, width * 46 / 100, 435, width - width * 46 / 100 - 16, 30, TRUE);
@@ -2007,6 +1650,7 @@ LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lp
         case ID_TARGET_SET: set_target(); return 0;
         case ID_REMOVE: remove_selected(); return 0;
         case ID_REFRESH: refresh_data(); return 0;
+        case ID_BACKUP: start_backup(); return 0;
         case ID_DIVIDENDS_OPEN: open_dividends_window(); return 0;
         case ID_TRADE_ADD: add_trade(); return 0;
         case ID_TRADE_DELETE: delete_trade(); return 0;
@@ -2094,6 +1738,17 @@ LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lp
         if (g_dividend_window) { fill_dividend_list(); InvalidateRect(g_dividend_window, nullptr, TRUE); }
         fill_list(); fill_signals(); fill_portfolio(); notify_new_signals(); return 0;
     }
+    case WM_BACKUP_READY: {
+        std::unique_ptr<BackupResult> result(reinterpret_cast<BackupResult*>(lparam));
+        EnableWindow(g_backup_button,TRUE);
+        if(!result->error.empty())MessageBoxW(window,widen("Резервная копия не создана: "+result->error).c_str(),L"MOEXWatch",MB_ICONERROR);
+        else {
+            MessageBoxW(window,(L"Копия создана и проверена:\n"+result->path.wstring()+
+                L"\n\nДля восстановления закройте приложение и следуйте RESTORE.txt в этой папке.").c_str(),L"Резервная копия",MB_ICONINFORMATION);
+            ShellExecuteW(window,L"open",result->path.c_str(),nullptr,nullptr,SW_SHOWNORMAL);
+        }
+        return 0;
+    }
     case WM_DIVIDENDS_READY:
         if (!g_dividend_window || !PostMessageW(g_dividend_window, message, wparam, lparam))
             delete reinterpret_cast<DividendFetchResult*>(lparam);
@@ -2139,7 +1794,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
     dividend_wc.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_WINDOW + 1);
     dividend_wc.lpszClassName = L"MOEXWatchDividendWindow";
     if (!RegisterClassExW(&dividend_wc)) return 1;
-    HWND window = CreateWindowExW(0, wc.lpszClassName, L"MOEX Watch 0.5.2 — аналитика и портфель", WS_OVERLAPPEDWINDOW,
+    HWND window = CreateWindowExW(0, wc.lpszClassName, L"MOEX Watch 0.6.0 — аналитика и портфель", WS_OVERLAPPEDWINDOW,
                                   CW_USEDEFAULT, CW_USEDEFAULT, 1340, 870, nullptr, nullptr, instance, nullptr);
     if (!window) return 2;
     ShowWindow(window, show); UpdateWindow(window);
