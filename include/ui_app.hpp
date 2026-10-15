@@ -153,7 +153,7 @@ public:
     void fill_dividend_list();
     void refresh_dividend_events();
     void open_dividends_window();
-    void add_control(HWND parent, const wchar_t* type, const wchar_t* caption, DWORD style, int x, int y, int w, int height, int id);
+    void add_control(std::vector<HWND>& controls, HWND parent, const wchar_t* type, const wchar_t* caption, DWORD style, int x, int y, int w, int height, int id);
     void start_backtest();
     void start_backup();
     std::optional<std::filesystem::path> select_operations_csv(bool save);
@@ -179,6 +179,9 @@ public:
     bool command_trades(WPARAM wparam);
     bool command_signals(WPARAM wparam);
     void complete_backtest(LPARAM lparam);
+    bool command_charts(WPARAM wparam);
+    bool notify_charts(LPARAM lparam);
+    void paint_charts(HDC dc,RECT client);
     static LRESULT CALLBACK window_proc(HWND,UINT,WPARAM,LPARAM);
     static LRESULT CALLBACK dividends_window_proc(HWND,UINT,WPARAM,LPARAM);
 };

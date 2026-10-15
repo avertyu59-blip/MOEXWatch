@@ -183,31 +183,30 @@ void Application::load_observations() {
 }
 
 void Application::create_signals_controls(HWND window) {
-    signals_page.building_signal_page = true;
-    add_control(window, L"BUTTON", L"RSI ниже", BS_AUTOCHECKBOX, 16, 59, 100, 28, ID_SIG_OVERSOLD);
-    add_control(window, L"EDIT", L"", WS_BORDER | ES_AUTOHSCROLL, 120, 55, 65, 28, ID_SIG_OVERSOLD_VALUE);
+    add_control(signals_page.controls,window, L"BUTTON", L"RSI ниже", BS_AUTOCHECKBOX, 16, 59, 100, 28, ID_SIG_OVERSOLD);
+    add_control(signals_page.controls,window, L"EDIT", L"", WS_BORDER | ES_AUTOHSCROLL, 120, 55, 65, 28, ID_SIG_OVERSOLD_VALUE);
     signals_page.oversold_value = GetDlgItem(window, ID_SIG_OVERSOLD_VALUE);
-    add_control(window, L"BUTTON", L"RSI выше", BS_AUTOCHECKBOX, 215, 59, 100, 28, ID_SIG_OVERBOUGHT);
-    add_control(window, L"EDIT", L"", WS_BORDER | ES_AUTOHSCROLL, 319, 55, 65, 28, ID_SIG_OVERBOUGHT_VALUE);
+    add_control(signals_page.controls,window, L"BUTTON", L"RSI выше", BS_AUTOCHECKBOX, 215, 59, 100, 28, ID_SIG_OVERBOUGHT);
+    add_control(signals_page.controls,window, L"EDIT", L"", WS_BORDER | ES_AUTOHSCROLL, 319, 55, 65, 28, ID_SIG_OVERBOUGHT_VALUE);
     signals_page.overbought_value = GetDlgItem(window, ID_SIG_OVERBOUGHT_VALUE);
-    add_control(window, L"BUTTON", L"Цена выше SMA200", BS_AUTOCHECKBOX, 16, 97, 175, 28, ID_SIG_SMA);
-    add_control(window, L"BUTTON", L"Цена рядом с целью", BS_AUTOCHECKBOX, 205, 97, 185, 28, ID_SIG_TARGET);
-    add_control(window, L"EDIT", L"", WS_BORDER | ES_AUTOHSCROLL, 397, 95, 65, 28, ID_SIG_TARGET_VALUE);
+    add_control(signals_page.controls,window, L"BUTTON", L"Цена выше SMA200", BS_AUTOCHECKBOX, 16, 97, 175, 28, ID_SIG_SMA);
+    add_control(signals_page.controls,window, L"BUTTON", L"Цена рядом с целью", BS_AUTOCHECKBOX, 205, 97, 185, 28, ID_SIG_TARGET);
+    add_control(signals_page.controls,window, L"EDIT", L"", WS_BORDER | ES_AUTOHSCROLL, 397, 95, 65, 28, ID_SIG_TARGET_VALUE);
     signals_page.target_value = GetDlgItem(window, ID_SIG_TARGET_VALUE);
-    add_control(window, L"STATIC", L"%", 0, 466, 98, 20, 24, 0);
-    add_control(window, L"STATIC", L"Совпадение", 0, 495, 98, 90, 24, 0);
-    add_control(window, L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_VSCROLL, 585, 94, 135, 100, ID_SIG_MODE);
+    add_control(signals_page.controls,window, L"STATIC", L"%", 0, 466, 98, 20, 24, 0);
+    add_control(signals_page.controls,window, L"STATIC", L"Совпадение", 0, 495, 98, 90, 24, 0);
+    add_control(signals_page.controls,window, L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_VSCROLL, 585, 94, 135, 100, ID_SIG_MODE);
     SendMessageW(GetDlgItem(window, ID_SIG_MODE), CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Любое условие"));
     SendMessageW(GetDlgItem(window, ID_SIG_MODE), CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Все условия"));
-    add_control(window, L"BUTTON", L"Всплывающие уведомления", BS_AUTOCHECKBOX, 738, 97, 240, 28, ID_SIG_NOTIFY);
-    add_control(window, L"BUTTON", L"Сохранить условия", BS_PUSHBUTTON, 990, 95, 145, 28, ID_SIG_SAVE);
-    add_control(window, L"BUTTON", L"Автообновление", BS_AUTOCHECKBOX, 16, 135, 155, 28, ID_SIG_AUTO_REFRESH);
-    add_control(window, L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_VSCROLL, 176, 132, 135, 100, ID_SIG_INTERVAL);
+    add_control(signals_page.controls,window, L"BUTTON", L"Всплывающие уведомления", BS_AUTOCHECKBOX, 738, 97, 240, 28, ID_SIG_NOTIFY);
+    add_control(signals_page.controls,window, L"BUTTON", L"Сохранить условия", BS_PUSHBUTTON, 990, 95, 145, 28, ID_SIG_SAVE);
+    add_control(signals_page.controls,window, L"BUTTON", L"Автообновление", BS_AUTOCHECKBOX, 16, 135, 155, 28, ID_SIG_AUTO_REFRESH);
+    add_control(signals_page.controls,window, L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_VSCROLL, 176, 132, 135, 100, ID_SIG_INTERVAL);
     signals_page.interval = GetDlgItem(window, ID_SIG_INTERVAL);
     const wchar_t* interval_names[] = {L"15 минут", L"30 минут", L"60 минут"};
     for (const auto* interval : interval_names)
         SendMessageW(signals_page.interval, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(interval));
-    add_control(window, L"STATIC", L"Проверка работает, пока приложение открыто; уведомления появляются при новых совпадениях.",
+    add_control(signals_page.controls,window, L"STATIC", L"Проверка работает, пока приложение открыто; уведомления появляются при новых совпадениях.",
                 0, 326, 137, 800, 22, 0);
     signals_page.summary = CreateWindowExW(0, L"STATIC", L"", WS_CHILD | WS_VISIBLE | SS_LEFT, 16, 170, 1200, 25, window,
                                        reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_SIG_SUMMARY)), GetModuleHandleW(nullptr), nullptr);
@@ -221,8 +220,6 @@ void Application::create_signals_controls(HWND window) {
     const int signal_widths[] = {90, 100, 90, 120, 100, 520};
     for (int i = 0; i < 6; ++i) { LVCOLUMNW col{}; col.mask = LVCF_TEXT | LVCF_WIDTH; col.pszText = const_cast<wchar_t*>(signal_headers[i]); col.cx = signal_widths[i]; ListView_InsertColumn(signals_page.list, i, &col); }
     if (app_font) SendMessageW(signals_page.list, WM_SETFONT, reinterpret_cast<WPARAM>(app_font), TRUE);
-    signals_page.building_signal_page = false;
-
 
 }
 

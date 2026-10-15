@@ -277,16 +277,15 @@ void Application::import_portfolio_operations() {
 }
 
 void Application::create_portfolio_controls(HWND window) {
-    portfolio_page.building_portfolio_page = true;
-    add_control(window, L"STATIC", L"Дата", 0, 16, 59, 42, 24, 0);
-    add_control(window, L"EDIT", L"", WS_BORDER | ES_AUTOHSCROLL, 60, 55, 105, 28, ID_PORT_DATE);
+    add_control(portfolio_page.controls,window, L"STATIC", L"Дата", 0, 16, 59, 42, 24, 0);
+    add_control(portfolio_page.controls,window, L"EDIT", L"", WS_BORDER | ES_AUTOHSCROLL, 60, 55, 105, 28, ID_PORT_DATE);
     portfolio_page.date = GetDlgItem(window, ID_PORT_DATE);
-    add_control(window, L"STATIC", L"Тикер", 0, 178, 59, 48, 24, 0);
+    add_control(portfolio_page.controls,window, L"STATIC", L"Тикер", 0, 178, 59, 48, 24, 0);
     portfolio_page.ticker = CreateWindowExW(0, L"COMBOBOX", L"", WS_CHILD | WS_VISIBLE | CBS_DROPDOWNLIST | WS_VSCROLL,
         229, 55, 115, 220, window, reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_PORT_TICKER)), GetModuleHandleW(nullptr), nullptr);
     if (app_font) SendMessageW(portfolio_page.ticker, WM_SETFONT, reinterpret_cast<WPARAM>(app_font), TRUE);
     portfolio_page.controls.push_back(portfolio_page.ticker);
-    add_control(window, L"STATIC", L"Операция", 0, 356, 59, 68, 24, 0);
+    add_control(portfolio_page.controls,window, L"STATIC", L"Операция", 0, 356, 59, 68, 24, 0);
     portfolio_page.side = CreateWindowExW(0, L"COMBOBOX", L"", WS_CHILD | WS_VISIBLE | CBS_DROPDOWNLIST,
         428, 55, 110, 100, window, reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_PORT_SIDE)), GetModuleHandleW(nullptr), nullptr);
     if (app_font) SendMessageW(portfolio_page.side, WM_SETFONT, reinterpret_cast<WPARAM>(app_font), TRUE);
@@ -294,22 +293,22 @@ void Application::create_portfolio_controls(HWND window) {
     SendMessageW(portfolio_page.side, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Покупка"));
     SendMessageW(portfolio_page.side, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Продажа"));
     SendMessageW(portfolio_page.side, CB_SETCURSEL, 0, 0);
-    add_control(window, L"STATIC", L"Количество", 0, 550, 59, 72, 24, 0);
-    add_control(window, L"EDIT", L"", WS_BORDER | ES_AUTOHSCROLL, 626, 55, 95, 28, ID_PORT_QUANTITY);
+    add_control(portfolio_page.controls,window, L"STATIC", L"Количество", 0, 550, 59, 72, 24, 0);
+    add_control(portfolio_page.controls,window, L"EDIT", L"", WS_BORDER | ES_AUTOHSCROLL, 626, 55, 95, 28, ID_PORT_QUANTITY);
     portfolio_page.quantity = GetDlgItem(window, ID_PORT_QUANTITY);
-    add_control(window, L"STATIC", L"Цена, ₽", 0, 16, 99, 58, 24, 0);
-    add_control(window, L"EDIT", L"", WS_BORDER | ES_AUTOHSCROLL, 78, 95, 105, 28, ID_PORT_PRICE);
+    add_control(portfolio_page.controls,window, L"STATIC", L"Цена, ₽", 0, 16, 99, 58, 24, 0);
+    add_control(portfolio_page.controls,window, L"EDIT", L"", WS_BORDER | ES_AUTOHSCROLL, 78, 95, 105, 28, ID_PORT_PRICE);
     portfolio_page.price = GetDlgItem(window, ID_PORT_PRICE);
-    add_control(window, L"STATIC", L"Комиссия, ₽", 0, 203, 99, 100, 24, 0);
-    add_control(window, L"EDIT", L"", WS_BORDER | ES_AUTOHSCROLL, 308, 95, 105, 28, ID_PORT_COMMISSION);
+    add_control(portfolio_page.controls,window, L"STATIC", L"Комиссия, ₽", 0, 203, 99, 100, 24, 0);
+    add_control(portfolio_page.controls,window, L"EDIT", L"", WS_BORDER | ES_AUTOHSCROLL, 308, 95, 105, 28, ID_PORT_COMMISSION);
     portfolio_page.commission = GetDlgItem(window, ID_PORT_COMMISSION);
     portfolio_page.add = CreateWindowExW(0, L"BUTTON", L"Записать операцию", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
         435, 95, 155, 28, window, reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_PORT_ADD)), GetModuleHandleW(nullptr), nullptr);
     if (app_font) SendMessageW(portfolio_page.add, WM_SETFONT, reinterpret_cast<WPARAM>(app_font), TRUE);
     portfolio_page.controls.push_back(portfolio_page.add);
-    add_control(window,L"BUTTON",L"Импорт CSV",BS_PUSHBUTTON,620,95,125,28,ID_PORT_IMPORT);
-    add_control(window,L"BUTTON",L"Экспорт CSV",BS_PUSHBUTTON,758,95,125,28,ID_PORT_EXPORT);
-    add_control(window, L"STATIC", L"Тикер выбирается из списка наблюдения. В себестоимость покупки включается комиссия; продажа списывается по средней цене.",
+    add_control(portfolio_page.controls,window,L"BUTTON",L"Импорт CSV",BS_PUSHBUTTON,620,95,125,28,ID_PORT_IMPORT);
+    add_control(portfolio_page.controls,window,L"BUTTON",L"Экспорт CSV",BS_PUSHBUTTON,758,95,125,28,ID_PORT_EXPORT);
+    add_control(portfolio_page.controls,window, L"STATIC", L"Тикер выбирается из списка наблюдения. В себестоимость покупки включается комиссия; продажа списывается по средней цене.",
         0, 16, 132, 1220, 22, 0);
     portfolio_page.summary = CreateWindowExW(0, L"STATIC", L"", WS_CHILD | WS_VISIBLE | SS_LEFT, 16, 157, 1240, 24, window,
         reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_PORT_SUMMARY)), GetModuleHandleW(nullptr), nullptr);
@@ -322,19 +321,19 @@ void Application::create_portfolio_controls(HWND window) {
     const wchar_t* position_headers[] = {L"Тикер",L"Акций",L"Средняя, ₽",L"Котировка, ₽",L"Стоимость, ₽",L"Доля, %",L"Бумажная прибыль, ₽",L"Бумажная, %",L"Зафиксировано, ₽",L"Стоп-лосс, ₽",L"Тейк-профит, ₽"};
     const int position_widths[] = {75,80,105,110,115,90,155,100,145,110,125};
     for (int i=0;i<11;++i) { LVCOLUMNW col{}; col.mask=LVCF_TEXT|LVCF_WIDTH; col.pszText=const_cast<wchar_t*>(position_headers[i]); col.cx=position_widths[i]; ListView_InsertColumn(portfolio_page.positions,i,&col); }
-    add_control(window, L"STATIC", L"Стоп-лосс, ₽", 0, 16, 418, 105, 24, 0);
-    add_control(window, L"EDIT", L"", WS_BORDER | ES_AUTOHSCROLL, 121, 414, 110, 28, ID_POSITION_STOP);
+    add_control(portfolio_page.controls,window, L"STATIC", L"Стоп-лосс, ₽", 0, 16, 418, 105, 24, 0);
+    add_control(portfolio_page.controls,window, L"EDIT", L"", WS_BORDER | ES_AUTOHSCROLL, 121, 414, 110, 28, ID_POSITION_STOP);
     portfolio_page.position_stop = GetDlgItem(window, ID_POSITION_STOP);
-    add_control(window, L"STATIC", L"Тейк-профит, ₽", 0, 248, 418, 115, 24, 0);
-    add_control(window, L"EDIT", L"", WS_BORDER | ES_AUTOHSCROLL, 367, 414, 110, 28, ID_POSITION_TAKE);
+    add_control(portfolio_page.controls,window, L"STATIC", L"Тейк-профит, ₽", 0, 248, 418, 115, 24, 0);
+    add_control(portfolio_page.controls,window, L"EDIT", L"", WS_BORDER | ES_AUTOHSCROLL, 367, 414, 110, 28, ID_POSITION_TAKE);
     portfolio_page.position_take = GetDlgItem(window, ID_POSITION_TAKE);
     portfolio_page.position_levels_save = CreateWindowExW(0, L"BUTTON", L"Сохранить уровни", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
         494, 414, 155, 28, window, reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_POSITION_LEVELS_SAVE)), GetModuleHandleW(nullptr), nullptr);
     if (app_font) SendMessageW(portfolio_page.position_levels_save, WM_SETFONT, reinterpret_cast<WPARAM>(app_font), TRUE);
     portfolio_page.controls.push_back(portfolio_page.position_levels_save);
-    add_control(window, L"STATIC", L"Выберите позицию; пустое поле отключает уровень. Линии также показываются на графике выбранной акции.",
+    add_control(portfolio_page.controls,window, L"STATIC", L"Выберите позицию; пустое поле отключает уровень. Линии также показываются на графике выбранной акции.",
         0, 664, 418, 610, 24, 0);
-    add_control(window, L"STATIC", L"Журнал операций", 0, 16, 466, 160, 24, 0);
+    add_control(portfolio_page.controls,window, L"STATIC", L"Журнал операций", 0, 16, 466, 160, 24, 0);
     portfolio_page.delete_button = CreateWindowExW(0, L"BUTTON", L"Удалить выбранную", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
         1060, 458, 170, 28, window, reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_PORT_DELETE)), GetModuleHandleW(nullptr), nullptr);
     if (app_font) SendMessageW(portfolio_page.delete_button, WM_SETFONT, reinterpret_cast<WPARAM>(app_font), TRUE);
@@ -347,8 +346,6 @@ void Application::create_portfolio_controls(HWND window) {
     const int operation_widths[] = {110,95,120,100,120,130};
     for (int i=0;i<6;++i) { LVCOLUMNW col{}; col.mask=LVCF_TEXT|LVCF_WIDTH; col.pszText=const_cast<wchar_t*>(operation_headers[i]); col.cx=operation_widths[i]; ListView_InsertColumn(portfolio_page.transactions_list,i,&col); }
     if (app_font) SendMessageW(portfolio_page.transactions_list, WM_SETFONT, reinterpret_cast<WPARAM>(app_font), TRUE);
-    portfolio_page.building_portfolio_page = false;
-
 
 }
 

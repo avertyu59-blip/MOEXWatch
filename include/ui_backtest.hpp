@@ -5,8 +5,6 @@
 #include <string>
 #include <atomic>
 #include "market_core.hpp"
-#include "observation.hpp"
-#include <shellapi.h>
 
 namespace moexwatch::ui {
 struct BacktestState {
@@ -15,7 +13,6 @@ struct BacktestState {
     HWND fee{};
     HWND run{};
     HWND result{};
-    bool building_backtest_page = false;
     std::atomic<bool> busy{false};
     std::vector<HWND> controls;
 };

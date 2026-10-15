@@ -72,17 +72,13 @@ std::string Application::today_date() {
     return out.str();
 }
 
-void Application::add_control(HWND parent, const wchar_t* type, const wchar_t* caption, DWORD style, int x, int y, int w, int height, int id) {
+void Application::add_control(std::vector<HWND>& controls, HWND parent, const wchar_t* type, const wchar_t* caption, DWORD style, int x, int y, int w, int height, int id) {
     HWND control = CreateWindowExW(0, type, caption, WS_CHILD | WS_VISIBLE | style, x, y, w, height, parent,
                              reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), GetModuleHandleW(nullptr), nullptr);
     if (app_font) SendMessageW(control, WM_SETFONT, reinterpret_cast<WPARAM>(app_font), TRUE);
     if (control) {
         if (id == ID_REFRESH) app_global_controls.push_back(control);
-        else if (signals_page.building_signal_page) signals_page.controls.push_back(control);
-        else if (backtest_page.building_backtest_page) backtest_page.controls.push_back(control);
-        else if (portfolio_page.building_portfolio_page) portfolio_page.controls.push_back(control);
-        else if (trades_page.building_trade_page) trades_page.controls.push_back(control);
-        else charts_page.market_controls.push_back(control);
+        else controls.push_back(control);
     }
 }
 } // namespace moexwatch::ui

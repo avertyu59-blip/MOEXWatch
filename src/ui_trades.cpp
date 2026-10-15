@@ -81,28 +81,27 @@ void Application::delete_trade() {
 }
 
 void Application::create_trades_controls(HWND window) {
-    trades_page.building_trade_page = true;
-    add_control(window, L"STATIC", L"Тикер", 0, 16, 59, 45, 24, 0);
-    add_control(window, L"EDIT", L"", WS_BORDER | ES_AUTOHSCROLL, 64, 55, 100, 28, ID_TRADE_TICKER);
+    add_control(trades_page.controls,window, L"STATIC", L"Тикер", 0, 16, 59, 45, 24, 0);
+    add_control(trades_page.controls,window, L"EDIT", L"", WS_BORDER | ES_AUTOHSCROLL, 64, 55, 100, 28, ID_TRADE_TICKER);
     trades_page.ticker = GetDlgItem(window, ID_TRADE_TICKER);
-    add_control(window, L"STATIC", L"Количество", 0, 180, 59, 65, 24, 0);
-    add_control(window, L"EDIT", L"", WS_BORDER | ES_AUTOHSCROLL, 248, 55, 95, 28, ID_TRADE_QUANTITY);
+    add_control(trades_page.controls,window, L"STATIC", L"Количество", 0, 180, 59, 65, 24, 0);
+    add_control(trades_page.controls,window, L"EDIT", L"", WS_BORDER | ES_AUTOHSCROLL, 248, 55, 95, 28, ID_TRADE_QUANTITY);
     trades_page.quantity = GetDlgItem(window, ID_TRADE_QUANTITY);
-    add_control(window, L"STATIC", L"Покупка, ₽", 0, 360, 59, 75, 24, 0);
-    add_control(window, L"EDIT", L"", WS_BORDER | ES_AUTOHSCROLL, 439, 55, 100, 28, ID_TRADE_BUY);
+    add_control(trades_page.controls,window, L"STATIC", L"Покупка, ₽", 0, 360, 59, 75, 24, 0);
+    add_control(trades_page.controls,window, L"EDIT", L"", WS_BORDER | ES_AUTOHSCROLL, 439, 55, 100, 28, ID_TRADE_BUY);
     trades_page.buy = GetDlgItem(window, ID_TRADE_BUY);
-    add_control(window, L"STATIC", L"Продажа, ₽", 0, 555, 59, 75, 24, 0);
-    add_control(window, L"EDIT", L"", WS_BORDER | ES_AUTOHSCROLL, 635, 55, 100, 28, ID_TRADE_SELL);
+    add_control(trades_page.controls,window, L"STATIC", L"Продажа, ₽", 0, 555, 59, 75, 24, 0);
+    add_control(trades_page.controls,window, L"EDIT", L"", WS_BORDER | ES_AUTOHSCROLL, 635, 55, 100, 28, ID_TRADE_SELL);
     trades_page.sell = GetDlgItem(window, ID_TRADE_SELL);
-    add_control(window, L"STATIC", L"Комиссия, ₽", 0, 16, 99, 100, 24, 0);
-    add_control(window, L"EDIT", L"", WS_BORDER | ES_AUTOHSCROLL, 118, 95, 105, 28, ID_TRADE_COMMISSION);
+    add_control(trades_page.controls,window, L"STATIC", L"Комиссия, ₽", 0, 16, 99, 100, 24, 0);
+    add_control(trades_page.controls,window, L"EDIT", L"", WS_BORDER | ES_AUTOHSCROLL, 118, 95, 105, 28, ID_TRADE_COMMISSION);
     trades_page.commission = GetDlgItem(window, ID_TRADE_COMMISSION);
-    add_control(window, L"STATIC", L"Налоговая ставка, %", 0, 238, 99, 175, 24, 0);
-    add_control(window, L"EDIT", L"", WS_BORDER | ES_AUTOHSCROLL, 430, 95, 90, 28, ID_TRADE_TAX);
+    add_control(trades_page.controls,window, L"STATIC", L"Налоговая ставка, %", 0, 238, 99, 175, 24, 0);
+    add_control(trades_page.controls,window, L"EDIT", L"", WS_BORDER | ES_AUTOHSCROLL, 430, 95, 90, 28, ID_TRADE_TAX);
     trades_page.tax = GetDlgItem(window, ID_TRADE_TAX);
-    add_control(window, L"BUTTON", L"Записать сделку", BS_PUSHBUTTON, 540, 95, 140, 28, ID_TRADE_ADD);
-    add_control(window, L"BUTTON", L"Удалить выбранную", BS_PUSHBUTTON, 692, 95, 155, 28, ID_TRADE_DELETE);
-    add_control(window, L"STATIC", L"Налог рассчитывается ориентировочно по введённой ставке; пустое поле означает 0%. Проверьте ставку для вашей ситуации.",
+    add_control(trades_page.controls,window, L"BUTTON", L"Записать сделку", BS_PUSHBUTTON, 540, 95, 140, 28, ID_TRADE_ADD);
+    add_control(trades_page.controls,window, L"BUTTON", L"Удалить выбранную", BS_PUSHBUTTON, 692, 95, 155, 28, ID_TRADE_DELETE);
+    add_control(trades_page.controls,window, L"STATIC", L"Налог рассчитывается ориентировочно по введённой ставке; пустое поле означает 0%. Проверьте ставку для вашей ситуации.",
                 0, 16, 130, 1200, 22, 0);
     trades_page.summary = CreateWindowExW(0, L"STATIC", L"", WS_CHILD | WS_VISIBLE | SS_LEFT, 16, 153, 1200, 26, window,
                                       reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_TRADE_SUMMARY)), GetModuleHandleW(nullptr), nullptr);
@@ -116,8 +115,6 @@ void Application::create_trades_controls(HWND window) {
     const int trade_widths[] = {75, 75, 105, 105, 110, 110, 90, 100, 110};
     for (int i = 0; i < 9; ++i) { LVCOLUMNW col{}; col.mask = LVCF_TEXT | LVCF_WIDTH; col.pszText = const_cast<wchar_t*>(trade_headers[i]); col.cx = trade_widths[i]; ListView_InsertColumn(trades_page.list, i, &col); }
     if (app_font) SendMessageW(trades_page.list, WM_SETFONT, reinterpret_cast<WPARAM>(app_font), TRUE);
-    trades_page.building_trade_page = false;
-
 
 }
 

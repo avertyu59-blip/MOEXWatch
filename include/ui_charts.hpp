@@ -3,10 +3,7 @@
 #include <windows.h>
 #include <vector>
 #include <string>
-#include <atomic>
 #include "market_core.hpp"
-#include "observation.hpp"
-#include <shellapi.h>
 
 namespace moexwatch::ui {
 enum class ChartPanel { Price, Comparison, Volume, Rsi };

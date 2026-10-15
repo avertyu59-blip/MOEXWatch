@@ -54,30 +54,28 @@ void Application::start_backtest() {
 }
 
 void Application::create_backtest_controls(HWND window) {
-    backtest_page.building_backtest_page = true;
-    add_control(window, L"STATIC", L"Акция", 0, 16, 61, 55, 24, 0);
+    add_control(backtest_page.controls,window, L"STATIC", L"Акция", 0, 16, 61, 55, 24, 0);
     backtest_page.ticker = CreateWindowExW(0, L"COMBOBOX", L"", WS_CHILD | WS_VISIBLE | CBS_DROPDOWNLIST | WS_VSCROLL,
         78, 55, 145, 220, window, reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_BACKTEST_TICKER)), GetModuleHandleW(nullptr), nullptr);
     if (app_font) SendMessageW(backtest_page.ticker, WM_SETFONT, reinterpret_cast<WPARAM>(app_font), TRUE);
     backtest_page.controls.push_back(backtest_page.ticker);
-    add_control(window, L"STATIC", L"Капитал, ₽", 0, 242, 61, 85, 24, 0);
-    add_control(window, L"EDIT", L"100000", WS_BORDER | ES_AUTOHSCROLL, 330, 55, 110, 28, ID_BACKTEST_CAPITAL);
+    add_control(backtest_page.controls,window, L"STATIC", L"Капитал, ₽", 0, 242, 61, 85, 24, 0);
+    add_control(backtest_page.controls,window, L"EDIT", L"100000", WS_BORDER | ES_AUTOHSCROLL, 330, 55, 110, 28, ID_BACKTEST_CAPITAL);
     backtest_page.capital = GetDlgItem(window, ID_BACKTEST_CAPITAL);
-    add_control(window, L"STATIC", L"Комиссия за сторону, %", 0, 458, 61, 168, 24, 0);
-    add_control(window, L"EDIT", L"0.05", WS_BORDER | ES_AUTOHSCROLL, 630, 55, 80, 28, ID_BACKTEST_FEE);
+    add_control(backtest_page.controls,window, L"STATIC", L"Комиссия за сторону, %", 0, 458, 61, 168, 24, 0);
+    add_control(backtest_page.controls,window, L"EDIT", L"0.05", WS_BORDER | ES_AUTOHSCROLL, 630, 55, 80, 28, ID_BACKTEST_FEE);
     backtest_page.fee = GetDlgItem(window, ID_BACKTEST_FEE);
     backtest_page.run = CreateWindowExW(0, L"BUTTON", L"Запустить тест", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
         920, 55, 145, 28, window, reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_BACKTEST_RUN)), GetModuleHandleW(nullptr), nullptr);
     if (app_font) SendMessageW(backtest_page.run, WM_SETFONT, reinterpret_cast<WPARAM>(app_font), TRUE);
     backtest_page.controls.push_back(backtest_page.run);
-    add_control(window, L"STATIC", L"Тестируются сохранённые условия со вкладки «Сигналы». Сделки — на следующем открытии после сигнала на закрытии.",
+    add_control(backtest_page.controls,window, L"STATIC", L"Тестируются сохранённые условия со вкладки «Сигналы». Сделки — на следующем открытии после сигнала на закрытии.",
                 0, 16, 96, 1190, 24, 0);
     backtest_page.result = CreateWindowExW(0, L"STATIC", L"Выберите акцию из списка наблюдения и нажмите «Запустить тест стратегии».",
         WS_CHILD | WS_VISIBLE | SS_LEFT, 16, 145, 1220, 200, window,
         reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_BACKTEST_RESULT)), GetModuleHandleW(nullptr), nullptr);
     if (app_font) SendMessageW(backtest_page.result, WM_SETFONT, reinterpret_cast<WPARAM>(app_font), TRUE);
     backtest_page.controls.push_back(backtest_page.result);
-    backtest_page.building_backtest_page = false;
 
 }
 

@@ -3,7 +3,6 @@
 #include <windows.h>
 #include <vector>
 #include <string>
-#include <atomic>
 #include "market_core.hpp"
 #include "observation.hpp"
 #include <shellapi.h>
@@ -17,7 +16,6 @@ struct SignalsState {
     HWND overbought_value{};
     HWND target_value{};
     HWND interval{};
-    bool building_signal_page = false;
     std::vector<HWND> controls;
     SignalSettings settings;
     ObservationEngine observer;

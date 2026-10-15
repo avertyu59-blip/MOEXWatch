@@ -3,10 +3,7 @@
 #include <windows.h>
 #include <vector>
 #include <string>
-#include <atomic>
 #include "market_core.hpp"
-#include "observation.hpp"
-#include <shellapi.h>
 
 namespace moexwatch::ui {
 struct PortfolioState {
@@ -24,7 +21,6 @@ struct PortfolioState {
     HWND position_stop{};
     HWND position_take{};
     HWND position_levels_save{};
-    bool building_portfolio_page = false;
     std::vector<HWND> controls;
     std::vector<PortfolioTransaction> transactions;
     std::vector<PositionLevels> position_levels;
