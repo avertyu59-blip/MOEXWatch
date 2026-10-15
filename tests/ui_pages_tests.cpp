@@ -18,6 +18,11 @@ struct Fixture {
     ~Fixture(){KillTimer(app.app_window,TIMER_AUTO_REFRESH);DestroyWindow(app.app_window);if(app.app_font)DeleteObject(app.app_font);}
 };
 RECT relative(HWND control,HWND parent){RECT r{};GetWindowRect(control,&r);MapWindowPoints(HWND_DESKTOP,parent,reinterpret_cast<POINT*>(&r),2);return r;}
+// Exercise the production instance routers without starting real I/O at WM_CREATE.
+LRESULT CALLBACK router_host(HWND w,UINT m,WPARAM p,LPARAM l){
+    if(m==WM_CREATE||m==WM_DESTROY)return 0;
+    return Application::window_proc(w,m,p,l);
+}
 }
 int main(){try{
     INITCOMMONCONTROLSEX common{sizeof(common),ICC_LISTVIEW_CLASSES|ICC_TAB_CLASSES};
@@ -102,9 +107,9 @@ int main(){try{
     // Real chart painting into a DIB exercises every GDI path without network data.
     app.app_items[0].candles.clear();app.app_imoex_candles.clear();
     using namespace std::chrono;
-    const auto last=sys_days{year{2026}/10/15};
+    const auto last_session=sys_days{year{2026}/10/15};
     for(int i=0;i<270;++i){
-        const auto date=observation_time(duration_cast<seconds>((last-days{269-i}).time_since_epoch()).count()).substr(0,10);
+        const auto date=observation_time(duration_cast<seconds>((last_session-days{269-i}).time_since_epoch()).count()).substr(0,10);
         const double price=100.0+i*0.3+std::sin(i*0.3)*3;
         app.app_items[0].candles.push_back({date,price-1,price+2,price-2,price,i==269?5000.0:1000.0});
         const double index=3000.0+i*2;
@@ -169,5 +174,32 @@ int main(){try{
         app.handle_window_message(app.app_window,WM_SIZE,0,MAKELPARAM(1164,720));
     }
     check(!app.command_charts(MAKEWPARAM(ID_BACKTEST_RUN,0)),"charts do not consume backtest command");
+    // A refresh is applied by ticker while another page is active; the user target wins.
+    app.activate_page(2);app.app_busy=true;EnableWindow(GetDlgItem(app.app_window,ID_REFRESH),FALSE);
+    auto incoming=std::make_unique<MarketRefreshResult>();
+    auto refreshed=app.app_items[0];refreshed.quote.last=190;refreshed.target=999;
+    incoming->instruments.push_back(refreshed);incoming->imoex_candles=app.app_imoex_candles;
+    app.handle_window_message(app.app_window,WM_DATA_READY,0,reinterpret_cast<LPARAM>(incoming.release()));
+    check(!app.app_busy&&IsWindowEnabled(GetDlgItem(app.app_window,ID_REFRESH)),"refresh completion restores global button state");
+    check(app.app_items[0].quote.last==190&&app.app_items[0].target==200,"refresh updates quote but preserves user target");
+    check(app.app_active_page==2&&ListView_GetItemCount(app.portfolio_page.transactions_list)==2,"refresh updates views without changing active page or operations");
+    Application first_owner,second_owner;
+    first_owner.app_storage_blocked=true;second_owner.app_storage_blocked=true;
+    WNDCLASSEXW wc{};wc.cbSize=sizeof(wc);wc.hInstance=GetModuleHandleW(nullptr);wc.lpfnWndProc=router_host;wc.lpszClassName=L"MOEXWatchRouterTest";
+    check(RegisterClassExW(&wc)!=0,"router fixture class registered");
+    first_owner.app_window=CreateWindowExW(0,wc.lpszClassName,L"first",WS_OVERLAPPEDWINDOW,0,0,1180,760,nullptr,nullptr,wc.hInstance,&first_owner);
+    second_owner.app_window=CreateWindowExW(0,wc.lpszClassName,L"second",WS_OVERLAPPEDWINDOW,0,0,1180,760,nullptr,nullptr,wc.hInstance,&second_owner);
+    check(first_owner.app_window&&second_owner.app_window,"instance-bound router windows created");
+    check(GetPropW(first_owner.app_window,L"MOEXWatch.Owner")==&first_owner&&GetPropW(second_owner.app_window,L"MOEXWatch.Owner")==&second_owner,"window ownership stays instance-specific");
+    first_owner.app_tabs=CreateWindowExW(0,WC_TABCONTROLW,L"",WS_CHILD,0,0,400,30,first_owner.app_window,nullptr,wc.hInstance,nullptr);
+    TCITEMW tab{};tab.mask=TCIF_TEXT;tab.pszText=const_cast<wchar_t*>(L"Test");TabCtrl_InsertItem(first_owner.app_tabs,0,&tab);TabCtrl_InsertItem(first_owner.app_tabs,1,&tab);TabCtrl_SetCurSel(first_owner.app_tabs,1);
+    first_owner.app_active_page=4;second_owner.app_active_page=4;
+    NMHDR page_change{};page_change.hwndFrom=first_owner.app_tabs;page_change.idFrom=ID_TABS;page_change.code=TCN_SELCHANGE;
+    SendMessageW(first_owner.app_window,WM_NOTIFY,ID_TABS,reinterpret_cast<LPARAM>(&page_change));
+    check(first_owner.app_active_page==1&&second_owner.app_active_page==4,"native routing cannot change another application owner");
+    DestroyWindow(first_owner.app_window);DestroyWindow(second_owner.app_window);
+    check(GetPropW(first_owner.app_window,L"MOEXWatch.Owner")==nullptr,"destroyed window releases owner binding");
+    const auto no_owner=CreateWindowExW(0,wc.lpszClassName,L"invalid",WS_OVERLAPPEDWINDOW,0,0,1180,760,nullptr,nullptr,wc.hInstance,nullptr);
+    check(no_owner==nullptr,"router rejects creation without an owner");
     std::cout<<"ui_pages_tests: all page, routing, layout and chart checks passed\n";
 }catch(const std::exception& ex){std::cerr<<ex.what()<<'\n';return 1;}}

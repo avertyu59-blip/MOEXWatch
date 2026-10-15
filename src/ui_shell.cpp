@@ -234,12 +234,14 @@ Application* owner(HWND window,UINT message,LPARAM lp) {
 }
 LRESULT CALLBACK Application::window_proc(HWND w,UINT m,WPARAM p,LPARAM l) {
     auto* app=owner(w,m,l);
+    if(m==WM_NCCREATE&&!app)return FALSE;
     const auto result=app?app->handle_window_message(w,m,p,l):DefWindowProcW(w,m,p,l);
     if(m==WM_NCDESTROY)RemovePropW(w,L"MOEXWatch.Owner");
     return result;
 }
 LRESULT CALLBACK Application::dividends_window_proc(HWND w,UINT m,WPARAM p,LPARAM l) {
     auto* app=owner(w,m,l);
+    if(m==WM_NCCREATE&&!app)return FALSE;
     const auto result=app?app->handle_dividends_message(w,m,p,l):DefWindowProcW(w,m,p,l);
     if(m==WM_NCDESTROY)RemovePropW(w,L"MOEXWatch.Owner");
     return result;
