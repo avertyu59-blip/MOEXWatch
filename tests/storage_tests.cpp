@@ -1,4 +1,5 @@
 #include "storage.hpp"
+#include "observation.hpp"
 #include <algorithm>
 #include <chrono>
 #include <filesystem>
@@ -39,8 +40,10 @@ int main(){
  st::save_signal_settings(root,signals);SignalSettings sl;st::load_signal_settings(root,sl);
  check(sl.require_all && sl.auto_refresh_minutes==30 && sl.rsi_oversold_below==25,"signal settings legacy format preserved");
  st::atomic_write(root/"dividends_SBER.csv",serialize_dividend_snapshot({"SBER","2026-10-15",{}}));
+ st::atomic_write(root/"price_alerts.csv",serialize_price_alerts({{1,"SBER",true,270,true}}));
+ st::atomic_write(root/"signal_history.csv",serialize_signal_history({}));
  const auto backup=st::create_backup(root);
- for(const auto* name:{"watchlist.csv","trades.csv","portfolio_transactions.csv","position_levels.csv","signals.ini","dividends_SBER.csv"})check(st::read_text(root/name)==st::read_text(backup/name),"backup bytes verified");
+ for(const auto* name:{"watchlist.csv","trades.csv","portfolio_transactions.csv","position_levels.csv","signals.ini","dividends_SBER.csv","price_alerts.csv","signal_history.csv"})check(st::read_text(root/name)==st::read_text(backup/name),"backup bytes verified");
  check(st::read_text(backup/"RESTORE.txt").has_value(),"backup includes restoration instructions");
  st::atomic_write(root/"watchlist.csv","# ticker;target\nLKOH;5000\n");
  check(st::read_text(backup/"watchlist.csv")!=st::read_text(root/"watchlist.csv"),"existing backup never modified by later saves");

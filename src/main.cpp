@@ -4,6 +4,10 @@
 #include "market_data.hpp"
 #include "portfolio_csv.hpp"
 #include "portfolio_import_ui.hpp"
+#include "observation.hpp"
+#include "observation_ui.hpp"
+#include "table_sort_win.hpp"
+#include <map>
 
 #include <algorithm>
 #include <atomic>
@@ -62,6 +66,7 @@ constexpr UINT_PTR TIMER_AUTO_REFRESH = 1;
 
 
 HWND g_window{};
+HWND g_observation_page{};
 HWND g_backup_button{};
 HWND g_list{};
 HWND g_ticker_edit{};
@@ -136,16 +141,33 @@ std::vector<Trade> g_trades;
 std::vector<PortfolioTransaction> g_portfolio_transactions;
 std::vector<PositionLevels> g_position_levels;
 SignalSettings g_signal_settings;
-std::unordered_map<std::string, bool> g_previous_signal_matches;
+ObservationEngine g_observer;
+std::vector<SignalEvent> g_signal_history;
+std::string g_observation_error;
+std::string g_observation_status="Первый свежий ответ задаёт исходное состояние без уведомления.";
+bool g_observation_writable=true;
+bool g_history_dirty=false;
+std::map<int,TableSort> g_table_sorts;
+void apply_table_sort(HWND list,int id) {
+    const auto found=g_table_sorts.find(id);if(found==g_table_sorts.end())return;
+    const int col=found->second.column;
+    bool numeric=false;
+    if(id==ID_LIST)numeric=col>=1&&col<=4;
+    else if(id==ID_TRADE_LIST)numeric=col>=1;
+    else if(id==ID_PORT_POSITIONS)numeric=col>=1;
+    else if(id==ID_PORT_TRANSACTIONS)numeric=col>=3;
+    else if(id==ID_SIG_LIST)numeric=col>=1&&col<=4;
+    else if(id==ID_DIVIDENDS_LIST)numeric=col==2||col==3;
+    const bool old=g_filling;g_filling=true;sort_report(list,found->second,numeric);g_filling=old;
+}
 bool g_signal_baseline_ready = false;
 NOTIFYICONDATAW g_notification_icon{};
 bool g_notification_icon_ready = false;
 WatchFilter g_filter = WatchFilter::All;
 int g_chart_sessions = 66;
 int selected_instrument() {
-    const int row = ListView_GetNextItem(g_list, -1, LVNI_SELECTED);
-    return row >= 0 && static_cast<std::size_t>(row) < g_visible.size()
-        ? static_cast<int>(g_visible[static_cast<std::size_t>(row)]) : -1;
+    const auto selected=selected_row_data(g_list);
+    return selected && *selected<g_items.size()?static_cast<int>(*selected):-1;
 }
 
 std::wstring widen(std::string_view text) {
@@ -334,7 +356,7 @@ void fill_list() {
         if (!matches_filter(analysis, item.quote.last, item.target, stale, g_filter)) continue;
         const int row_index = static_cast<int>(g_visible.size());
         g_visible.push_back(i);
-        LVITEMW row{}; row.mask = LVIF_TEXT; row.iItem = row_index;
+        LVITEMW row{}; row.mask = LVIF_TEXT|LVIF_PARAM; row.lParam=static_cast<LPARAM>(i); row.iItem = row_index;
         auto ticker = widen(item.ticker); row.pszText = ticker.data();
         ListView_InsertItem(g_list, &row);
         const std::string values[] = {optional_number(item.quote.last), percent(item.quote.change_percent),
@@ -349,6 +371,7 @@ void fill_list() {
         g_selected = g_visible[static_cast<std::size_t>(row)];
         ListView_SetItemState(g_list, row, LVIS_SELECTED | LVIS_FOCUSED, LVIS_SELECTED | LVIS_FOCUSED);
     }
+    apply_table_sort(g_list,ID_LIST);
     g_filling = false;
     update_analysis();
 }
@@ -397,7 +420,7 @@ void fill_trades() {
         totals.profit_after_commission += result->profit_after_commission;
         totals.tax += result->tax;
         totals.net_profit += result->net_profit;
-        LVITEMW row{}; row.mask = LVIF_TEXT; row.iItem = static_cast<int>(i);
+        LVITEMW row{}; row.mask = LVIF_TEXT|LVIF_PARAM; row.lParam=static_cast<LPARAM>(i); row.iItem = static_cast<int>(i);
         auto ticker = widen(trade.ticker); row.pszText = ticker.data();
         ListView_InsertItem(g_trade_list, &row);
         const std::string values[] = {money(trade.quantity), money(trade.buy_price), money(trade.sell_price),
@@ -413,6 +436,7 @@ void fill_trades() {
         L"     Налог (оценка): " + widen(money(totals.tax)) + L" ₽" +
         L"     Чистая прибыль: " + widen(money(totals.net_profit)) + L" ₽";
     SetWindowTextW(g_trade_summary, summary.c_str());
+    apply_table_sort(g_trade_list,ID_TRADE_LIST);
 }
 
 std::vector<Quote> portfolio_quotes() {
@@ -466,7 +490,7 @@ void fill_portfolio() {
     if (portfolio) {
         for (const auto& position : portfolio->positions) {
             if (position.quantity <= 0.0) continue;
-            LVITEMW row{}; row.mask = LVIF_TEXT; row.iItem = static_cast<int>(row_index);
+            LVITEMW row{}; row.mask = LVIF_TEXT|LVIF_PARAM; row.lParam=static_cast<LPARAM>(row_index); row.iItem = static_cast<int>(row_index);
             auto ticker = widen(position.ticker); row.pszText = ticker.data();
             ListView_InsertItem(g_port_positions, &row);
             bool stale = false;
@@ -489,7 +513,7 @@ void fill_portfolio() {
     }
     for (std::size_t i = 0; i < g_portfolio_transactions.size(); ++i) {
         const auto& transaction = g_portfolio_transactions[i];
-        LVITEMW row{}; row.mask = LVIF_TEXT; row.iItem = static_cast<int>(i);
+        LVITEMW row{}; row.mask = LVIF_TEXT|LVIF_PARAM; row.lParam=static_cast<LPARAM>(i); row.iItem = static_cast<int>(i);
         auto date = widen(transaction.date); row.pszText = date.data();
         ListView_InsertItem(g_port_transactions_list, &row);
         const std::string values[] = {transaction.ticker, portfolio_side_name(transaction.side),
@@ -498,6 +522,8 @@ void fill_portfolio() {
             auto wide = widen(values[col - 1]); ListView_SetItemText(g_port_transactions_list, static_cast<int>(i), col, wide.data());
         }
     }
+    apply_table_sort(g_port_positions,ID_PORT_POSITIONS);
+    apply_table_sort(g_port_transactions_list,ID_PORT_TRANSACTIONS);
     if (!portfolio) {
         SetWindowTextW(g_port_summary, L"В журнале есть продажа без достаточного остатка. Проверьте и удалите ошибочную операцию.");
         return;
@@ -620,7 +646,8 @@ void add_portfolio_transaction() {
 }
 
 void delete_portfolio_transaction() {
-    const int selected = ListView_GetNextItem(g_port_transactions_list, -1, LVNI_SELECTED);
+    const auto selected_id=selected_row_data(g_port_transactions_list);
+    const int selected=selected_id?static_cast<int>(*selected_id):-1;
     if (selected < 0 || static_cast<std::size_t>(selected) >= g_portfolio_transactions.size()) return;
     g_portfolio_transactions.erase(g_portfolio_transactions.begin() + selected);
     save_portfolio(); fill_portfolio();
@@ -656,7 +683,8 @@ void add_trade() {
 }
 
 void delete_trade() {
-    const int selected = ListView_GetNextItem(g_trade_list, -1, LVNI_SELECTED);
+    const auto selected_id=selected_row_data(g_trade_list);
+    const int selected=selected_id?static_cast<int>(*selected_id):-1;
     if (selected < 0 || static_cast<std::size_t>(selected) >= g_trades.size()) return;
     g_trades.erase(g_trades.begin() + selected);
     save_trades(); fill_trades();
@@ -710,10 +738,11 @@ bool read_signal_settings_from_controls() {
         MessageBoxW(g_window, L"Пороги RSI и расстояние до цели должны быть от 0 до 100.", L"Проверьте условия", MB_ICONWARNING);
         return false;
     }
+    const bool changed=!same_technical_rules(g_signal_settings,settings);
     g_signal_settings = settings;
     save_signal_settings();
     update_auto_refresh_timer();
-    g_signal_baseline_ready = false;
+    if(changed)g_signal_baseline_ready = false;
     fill_signals();
     return true;
 }
@@ -722,13 +751,14 @@ void fill_signals() {
     if (!g_signal_list || !g_signal_summary) return;
     ListView_DeleteAllItems(g_signal_list);
     std::size_t count = 0;
+    const auto now=std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count();
     for (const auto& item : g_items) {
         const auto analysis = analyze(item.candles);
         const auto evaluation = evaluate_signals(analysis, item.quote.last, item.target,
-            item.quote_stale, item.candles_stale, g_signal_settings);
+            item.quote_stale || !fresh_moex_quote(item.quote,now), item.candles_stale, g_signal_settings);
         if (!evaluation.matched) continue;
         ++count;
-        LVITEMW row{}; row.mask = LVIF_TEXT; row.iItem = static_cast<int>(count - 1);
+        LVITEMW row{}; row.mask = LVIF_TEXT|LVIF_PARAM; row.lParam=static_cast<LPARAM>(&item-g_items.data()); row.iItem = static_cast<int>(count - 1);
         auto ticker = widen(item.ticker); row.pszText = ticker.data();
         ListView_InsertItem(g_signal_list, &row);
         std::string reasons;
@@ -744,8 +774,9 @@ void fill_signals() {
     }
     const auto summary = L"Совпадений: " + std::to_wstring(count) +
         (g_signal_settings.require_all ? L"   Режим: все условия   " : L"   Режим: любое условие   ") +
-        L"Сигналы считаются только по свежей котировке и истории.";
+        L"Котировка не старше 20 минут (МСК) и обновлённая история.";
     SetWindowTextW(g_signal_summary, summary.c_str());
+    apply_table_sort(g_signal_list,ID_SIG_LIST);
 }
 
 void add_notification_icon() {
@@ -771,26 +802,32 @@ std::string signal_reason_text(const SignalEvaluation& evaluation) {
 }
 
 void notify_new_signals() {
-    std::unordered_map<std::string, bool> current;
-    std::vector<std::pair<std::string, std::string>> newly_matched;
-    for (const auto& item : g_items) {
-        const auto evaluation = evaluate_signals(analyze(item.candles), item.quote.last, item.target,
-            item.quote_stale, item.candles_stale, g_signal_settings);
-        current[item.ticker] = evaluation.matched;
-        const auto previous = g_previous_signal_matches.find(item.ticker);
-        if (g_signal_baseline_ready && evaluation.matched &&
-            (previous == g_previous_signal_matches.end() || !previous->second))
-            newly_matched.emplace_back(item.ticker, signal_reason_text(evaluation));
+    if(!g_signal_baseline_ready){g_observer.reset_technical();g_signal_baseline_ready=true;}
+    const auto now=std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+    std::vector<std::pair<std::string,std::string>> newly_matched;
+    std::size_t fresh_count=0;
+    for(const auto& item:g_items) {
+        const auto evaluation=evaluate_signals(analyze(item.candles),item.quote.last,item.target,item.quote_stale,item.candles_stale,g_signal_settings);
+        const bool fresh=!item.quote_stale && fresh_moex_quote(item.quote,now);if(fresh)++fresh_count;
+        auto events=g_observer.observe(item.quote,fresh,!item.candles_stale,evaluation,g_signal_settings.require_all?"Все условия":"Любое условие",now);
+        for(auto& event:events){newly_matched.emplace_back(event.ticker,event.condition+"; цена "+format_price(event.price)+"; котировка "+event.quote_time);g_signal_history.push_back(std::move(event));g_history_dirty=true;}
     }
-    g_previous_signal_matches = std::move(current);
-    if (!g_signal_baseline_ready) { g_signal_baseline_ready = true; return; }
+    if(g_signal_history.size()>2000)g_signal_history.erase(g_signal_history.begin(),g_signal_history.end()-2000);
+    g_observation_status="Свежих котировок для проверки: "+std::to_string(fresh_count)+"/"+std::to_string(g_items.size())+" (возраст до 20 минут, МСК). История не зависит от всплывающих уведомлений.";
+    if(g_history_dirty && g_observation_writable)try {
+        storage::atomic_write(storage::data_directory()/"signal_history.csv",serialize_signal_history(g_signal_history));g_history_dirty=false;g_observation_error.clear();
+    }catch(const std::exception& ex){g_observation_error=std::string("Новые события пока только в памяти: ")+ex.what();}
+    refresh_observation_page(g_observation_page);
     if (!g_signal_settings.notifications_enabled || newly_matched.empty()) return;
     if (g_notification_icon_ready) {
         std::wstring message;
         for (const auto& [ticker, reason] : newly_matched) {
             const std::wstring line = widen(ticker + ": " + reason);
             if (!message.empty()) message += L"\n";
-            if (message.size() + line.size() >= std::size(g_notification_icon.szInfo)) break;
+            if (message.size() + line.size() >= std::size(g_notification_icon.szInfo)) {
+                if(message.empty())message=line.substr(0,std::size(g_notification_icon.szInfo)-1);
+                break;
+            }
             message += line;
         }
         g_notification_icon.uFlags = NIF_INFO;
@@ -810,7 +847,8 @@ void notify_new_signals() {
 }
 
 void activate_page(int page) {
-    g_active_page = std::clamp(page, 0, 4);
+    g_active_page = std::clamp(page, 0, 5);
+    if(g_observation_page){ShowWindow(g_observation_page,g_active_page==5?SW_SHOW:SW_HIDE);if(g_active_page==5)refresh_observation_page(g_observation_page);}
     for (const auto control : g_market_controls) ShowWindow(control, g_active_page == 0 ? SW_SHOW : SW_HIDE);
     for (const auto control : g_trade_controls) ShowWindow(control, g_active_page == 1 ? SW_SHOW : SW_HIDE);
     for (const auto control : g_portfolio_controls) ShowWindow(control, g_active_page == 2 ? SW_SHOW : SW_HIDE);
@@ -829,6 +867,7 @@ void add_ticker() {
         MessageBoxW(g_window, L"Этот тикер уже есть в списке.", L"Список наблюдения", MB_ICONINFORMATION); return;
     }
     Instrument item; item.ticker = ticker; item.quote.ticker = ticker;
+    g_observer.forget_ticker(ticker);
     g_items.push_back(std::move(item)); g_selected = g_items.size() - 1;
     SendMessageW(g_backtest_ticker, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(widen(ticker).c_str()));
     SendMessageW(g_port_ticker, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(widen(ticker).c_str()));
@@ -868,6 +907,7 @@ void remove_selected() {
         if (static_cast<std::size_t>(selected) == g_dividend_instrument) DestroyWindow(g_dividend_window);
         else if (static_cast<std::size_t>(selected) < g_dividend_instrument) --g_dividend_instrument;
     }
+    g_observer.forget_ticker(g_items[static_cast<std::size_t>(selected)].ticker);
     g_items.erase(g_items.begin() + selected);
     SendMessageW(g_port_ticker, CB_DELETESTRING, static_cast<WPARAM>(selected), 0);
     if (!g_items.empty()) SendMessageW(g_port_ticker, CB_SETCURSEL, static_cast<WPARAM>(std::min(static_cast<std::size_t>(selected), g_items.size() - 1)), 0);
@@ -1111,7 +1151,7 @@ void fill_dividend_list() {
                     yield = widen(percent(event.amount_per_share / candle->close * 100.0) + " (к закрытию)");
             }
         }
-        LVITEMW row{}; row.mask = LVIF_TEXT; row.iItem = static_cast<int>(index);
+        LVITEMW row{}; row.mask = LVIF_TEXT|LVIF_PARAM; row.lParam=static_cast<LPARAM>(index); row.iItem = static_cast<int>(index);
         std::wstring date = event.record_date.empty() ? L"н/д (прогноз)" : widen(event.record_date);
         row.pszText = date.data();
         const int row_index = ListView_InsertItem(g_dividend_list, &row);
@@ -1135,6 +1175,7 @@ void fill_dividend_list() {
         if (!item.dividend_error.empty()) info += "\r\nОбновление не удалось: " + item.dividend_error;
         SetWindowTextW(g_dividend_info, widen(info).c_str());
     }
+    apply_table_sort(g_dividend_list,ID_DIVIDENDS_LIST);
 }
 
 void refresh_dividend_events() {
@@ -1210,11 +1251,18 @@ LRESULT CALLBACK dividends_window_proc(HWND window, UINT message, WPARAM wparam,
         break;
     case WM_NOTIFY: {
         const auto* notice = reinterpret_cast<const NMHDR*>(lparam);
+        if(notice->idFrom==ID_DIVIDENDS_LIST && notice->code==LVN_COLUMNCLICK) {
+            auto& sort=g_table_sorts[ID_DIVIDENDS_LIST];const int column=reinterpret_cast<NMLISTVIEW*>(lparam)->iSubItem;
+            if(sort.column==column)sort.ascending=!sort.ascending;else{sort.column=column;sort.ascending=true;}
+            apply_table_sort(g_dividend_list,ID_DIVIDENDS_LIST);return 0;
+        }
         if (notice->idFrom == ID_DIVIDENDS_LIST && notice->code == NM_DBLCLK) {
             const auto* click = reinterpret_cast<const NMITEMACTIVATE*>(lparam);
             if (g_dividend_instrument < g_items.size() && click->iItem >= 0 &&
                 static_cast<std::size_t>(click->iItem) < g_items[g_dividend_instrument].dividends.size()) {
-                const auto& event = g_items[g_dividend_instrument].dividends[static_cast<std::size_t>(click->iItem)];
+                const auto event_index=row_data(g_dividend_list,click->iItem);
+                if(!event_index || *event_index>=g_items[g_dividend_instrument].dividends.size())return 0;
+                const auto& event = g_items[g_dividend_instrument].dividends[*event_index];
                 const auto& url = click->iSubItem == 8 ? event.issuer_url : event.source_url;
                 if (url.starts_with("https://smart-lab.ru/") || url.starts_with("https://lukoil.ru/"))
                     ShellExecuteW(window, L"open", widen(url).c_str(), nullptr, nullptr, SW_SHOWNORMAL);
@@ -1436,6 +1484,13 @@ void import_portfolio_operations() {
     }catch(const std::exception& ex){MessageBoxW(g_window,widen(ex.what()).c_str(),L"Импорт не выполнен",MB_ICONERROR);}
 }
 
+void load_observations() {
+    const auto failed=[](const std::exception& ex){g_observation_writable=false;if(!g_observation_error.empty())g_observation_error+="; ";g_observation_error+=std::string(ex.what())+". Исходный файл сохранён; новые события только в памяти.";};
+    try{if(const auto bytes=storage::read_text(storage::data_directory()/"price_alerts.csv"))g_observer.configure(parse_price_alerts(*bytes));}catch(const std::exception& ex){failed(ex);}
+    try{if(const auto bytes=storage::read_text(storage::data_directory()/"signal_history.csv"))g_signal_history=parse_signal_history(*bytes);}catch(const std::exception& ex){failed(ex);}
+    refresh_observation_page(g_observation_page);
+}
+
 void create_controls(HWND window) {
     g_font = CreateFontW(-17, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
                          OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI");
@@ -1450,6 +1505,7 @@ void create_controls(HWND window) {
     tab.pszText = const_cast<wchar_t*>(L"Портфель"); TabCtrl_InsertItem(g_tabs, 2, &tab);
     tab.pszText = const_cast<wchar_t*>(L"Сигналы"); TabCtrl_InsertItem(g_tabs, 3, &tab);
     tab.pszText = const_cast<wchar_t*>(L"Тест стратегии"); TabCtrl_InsertItem(g_tabs, 4, &tab);
+    tab.pszText = const_cast<wchar_t*>(L"История сигналов"); TabCtrl_InsertItem(g_tabs, 5, &tab);
     TabCtrl_SetCurSel(g_tabs, 0);
     if (g_font) SendMessageW(g_tabs, WM_SETFONT, reinterpret_cast<WPARAM>(g_font), TRUE);
 
@@ -1617,7 +1673,7 @@ void create_controls(HWND window) {
     add_control(window, L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_VSCROLL, 585, 94, 135, 100, ID_SIG_MODE);
     SendMessageW(GetDlgItem(window, ID_SIG_MODE), CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Любое условие"));
     SendMessageW(GetDlgItem(window, ID_SIG_MODE), CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Все условия"));
-    add_control(window, L"BUTTON", L"Уведомлять о новых совпадениях", BS_AUTOCHECKBOX, 738, 97, 240, 28, ID_SIG_NOTIFY);
+    add_control(window, L"BUTTON", L"Всплывающие уведомления", BS_AUTOCHECKBOX, 738, 97, 240, 28, ID_SIG_NOTIFY);
     add_control(window, L"BUTTON", L"Сохранить условия", BS_PUSHBUTTON, 990, 95, 145, 28, ID_SIG_SAVE);
     add_control(window, L"BUTTON", L"Автообновление", BS_AUTOCHECKBOX, 16, 135, 155, 28, ID_SIG_AUTO_REFRESH);
     add_control(window, L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_VSCROLL, 176, 132, 135, 100, ID_SIG_INTERVAL);
@@ -1665,6 +1721,17 @@ void create_controls(HWND window) {
     if (g_font) SendMessageW(g_backtest_result, WM_SETFONT, reinterpret_cast<WPARAM>(g_font), TRUE);
     g_backtest_controls.push_back(g_backtest_result);
     g_building_backtest_page = false;
+    ObservationBindings bindings;
+    bindings.rules=[] {return g_observer.rules();};bindings.events=[] {return g_signal_history;};
+    bindings.tickers=[] {std::vector<std::string> tickers;for(const auto& item:g_items)tickers.push_back(item.ticker);return tickers;};
+    bindings.error=[] {return g_observation_status+" "+g_observation_error;};
+    bindings.save_rules=[](const auto& rules){
+        if(!g_observation_writable)throw std::runtime_error("Сначала восстановите повреждённые файлы наблюдений из резервной копии");
+        storage::atomic_write(storage::data_directory()/"price_alerts.csv",serialize_price_alerts(rules));g_observer.configure(rules);
+    };
+    bindings.open_ticker=[](const std::string& ticker){const auto it=std::find_if(g_items.begin(),g_items.end(),[&](const auto& item){return item.ticker==ticker;});if(it==g_items.end()){MessageBoxW(g_window,L"Бумаги нет в наблюдении. Добавьте тикер на вкладке «Аналитика».",L"История сигналов",MB_ICONINFORMATION);return;}g_filter=WatchFilter::All;SendMessageW(GetDlgItem(g_window,ID_FILTER),CB_SETCURSEL,0,0);g_selected=static_cast<std::size_t>(it-g_items.begin());fill_list();TabCtrl_SetCurSel(g_tabs,0);activate_page(0);};
+    g_observation_page=create_observation_page(window,g_font,std::move(bindings));
+    if(!g_observation_page)MessageBoxW(window,L"Не удалось создать вкладку истории сигналов.",L"MOEXWatch",MB_ICONERROR);
     activate_page(0);
 }
 
@@ -1672,7 +1739,7 @@ LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lp
     switch (message) {
     case WM_CREATE:
         g_window = window; create_controls(window); load_signal_settings(); synchronize_signal_controls();
-        update_auto_refresh_timer(); load_watchlist(); load_trades(); load_portfolio(); load_position_levels(); load_market_cache(g_items, g_imoex_candles, g_imoex_error); fill_list(); fill_trades(); fill_signals(); fill_portfolio();
+        update_auto_refresh_timer(); load_watchlist(); load_observations(); load_trades(); load_portfolio(); load_position_levels(); load_market_cache(g_items, g_imoex_candles, g_imoex_error); fill_list(); fill_trades(); fill_signals(); fill_portfolio();
         for (const auto& item : g_items) {
             SendMessageW(g_backtest_ticker, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(widen(item.ticker).c_str()));
             SendMessageW(g_port_ticker, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(widen(item.ticker).c_str()));
@@ -1682,6 +1749,7 @@ LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lp
         add_notification_icon(); refresh_data(); return 0;
     case WM_SIZE: {
         const int width = LOWORD(lparam), height = HIWORD(lparam);
+        if(g_observation_page)MoveWindow(g_observation_page,16,100,width-32,height-116,TRUE);
         if (g_tabs) MoveWindow(g_tabs, 16, 8, width - 195, 34, TRUE);
         if(g_backup_button)MoveWindow(g_backup_button, width-171, 9, 155, 28, TRUE);
         if (g_list) MoveWindow(g_list, 16, 184, std::max(360, width * 44 / 100), height - 204, TRUE);
@@ -1740,6 +1808,10 @@ LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lp
         }
         break;
     case WM_NOTIFY:
+        if(reinterpret_cast<NMHDR*>(lparam)->code==LVN_COLUMNCLICK) {
+            const auto* click=reinterpret_cast<NMLISTVIEW*>(lparam);const int id=static_cast<int>(click->hdr.idFrom);
+            if(id==ID_LIST||id==ID_TRADE_LIST||id==ID_PORT_POSITIONS||id==ID_PORT_TRANSACTIONS||id==ID_SIG_LIST){auto& sort=g_table_sorts[id];if(sort.column==click->iSubItem)sort.ascending=!sort.ascending;else{sort.column=click->iSubItem;sort.ascending=true;}apply_table_sort(click->hdr.hwndFrom,id);if(id==ID_PORT_POSITIONS)fill_position_level_editor();return 0;}
+        }
         if (reinterpret_cast<NMHDR*>(lparam)->idFrom == ID_CHART_TABS && reinterpret_cast<NMHDR*>(lparam)->code == TCN_SELCHANGE) {
             g_chart_panel = static_cast<ChartPanel>(std::clamp(TabCtrl_GetCurSel(g_chart_tabs), 0, 3));
             InvalidateRect(window, nullptr, TRUE); return 0;
@@ -1754,6 +1826,7 @@ LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lp
         }
         if (reinterpret_cast<NMHDR*>(lparam)->idFrom == ID_PORT_POSITIONS &&
             reinterpret_cast<NMHDR*>(lparam)->code == LVN_ITEMCHANGED) {
+            if(g_filling)return 0;
             const auto* changed = reinterpret_cast<const NMLISTVIEW*>(lparam);
             if ((changed->uNewState & LVIS_SELECTED) != 0) fill_position_level_editor();
             return 0;
@@ -1856,7 +1929,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
     dividend_wc.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_WINDOW + 1);
     dividend_wc.lpszClassName = L"MOEXWatchDividendWindow";
     if (!RegisterClassExW(&dividend_wc)) return 1;
-    HWND window = CreateWindowExW(0, wc.lpszClassName, L"MOEX Watch 0.6.1 — аналитика и портфель", WS_OVERLAPPEDWINDOW,
+    HWND window = CreateWindowExW(0, wc.lpszClassName, L"MOEX Watch 0.6.2 — аналитика и портфель", WS_OVERLAPPEDWINDOW,
                                   CW_USEDEFAULT, CW_USEDEFAULT, 1340, 870, nullptr, nullptr, instance, nullptr);
     if (!window) return 2;
     ShowWindow(window, show); UpdateWindow(window);

@@ -100,6 +100,7 @@ std::optional<Quote> parse_quote_csv(std::string_view csv, std::string_view tick
         quote.last = number(field(rows[i], last).value_or(""));
         if (change) quote.change_percent = number(field(rows[i], change).value_or(""));
         quote.updated_at = field(rows[i], updated).value_or("");
+        quote.source_timestamp = field(rows[i], column(header,"SYSTIME")).value_or("");
         return quote;
     }
     return std::nullopt;

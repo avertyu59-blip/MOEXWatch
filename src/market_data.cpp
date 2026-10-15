@@ -35,7 +35,7 @@ std::runtime_error network_error(const char* message) {
 }
 
 std::string https_get(const std::wstring& path, const wchar_t* host = L"iss.moex.com") {
-    InternetHandle session(WinHttpOpen(L"MOEXWatch/0.6.1", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
+    InternetHandle session(WinHttpOpen(L"MOEXWatch/0.6.2", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
                                        WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0));
     if (!session.value) throw network_error("Не удалось открыть HTTPS-сессию");
     WinHttpSetTimeouts(session.value, 5000, 5000, 6000, 6000);
@@ -190,7 +190,7 @@ Instrument fetch_instrument(const Instrument& previous) {
     } catch(const std::exception&) {}
     const std::wstring base=L"/iss/engines/stock/markets/shares/boards/TQBR/securities/"+widen(item.ticker);
     try {
-        const auto csv=https_get(base+L".csv?iss.meta=on&iss.only=marketdata&marketdata.columns=SECID,LAST,LASTCHANGEPRCNT,UPDATETIME&iss.delimiter=%3B&iss.dp=point&lang=en");
+        const auto csv=https_get(base+L".csv?iss.meta=on&iss.only=marketdata&marketdata.columns=SECID,LAST,LASTCHANGEPRCNT,UPDATETIME,SYSTIME&iss.delimiter=%3B&iss.dp=point&lang=en");
         const auto quote=parse_quote_csv(csv,item.ticker);
         if(quote){item.quote=*quote;item.quote_stale=!quote->last.has_value();}
         else item.error="Котировки: формат CSV не распознан";

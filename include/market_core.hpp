@@ -65,6 +65,7 @@ struct Quote {
     std::optional<double> last;
     std::optional<double> change_percent;
     std::string updated_at;
+    std::string source_timestamp{};
 };
 
 struct Analysis {
