@@ -17,6 +17,7 @@ struct Temp {
 };
 }
 int main(){
+ try {
  Temp tmp;const auto root=tmp.root;
  check(!st::read_text(root/"missing.csv"),"missing file distinguished from unreadable file");
  st::atomic_write(root/"watchlist.csv","# ticker;target\nSBER;250\nGAZP;\n");
@@ -80,4 +81,5 @@ int main(){
  const auto concurrent=st::create_backup(root);writer.join();
  check(st::read_text(concurrent/"trades.csv")==st::read_text(root/"trades.csv"),"backup and saves serialized without partial records");
  std::cout<<"storage_tests: all checks passed\n";
+ } catch(const std::exception& ex) {std::cerr<<"storage_tests: "<<ex.what()<<std::endl;return 1;}
 }

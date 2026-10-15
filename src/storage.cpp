@@ -277,8 +277,11 @@ std::filesystem::path create_backup(const std::filesystem::path& root) {
         for(const auto* name_part:{"watchlist.csv","trades.csv","portfolio_transactions.csv","position_levels.csv","signals.ini"})
             if(std::filesystem::exists(root/name_part))files.push_back(root/name_part);
         if(std::filesystem::exists(root))for(const auto& entry:std::filesystem::directory_iterator(root)) {
-            const auto filename=entry.path().filename().string();
-            if(entry.is_regular_file() && filename.starts_with("dividends_") && filename.ends_with(".csv"))files.push_back(entry.path());
+            if(!entry.is_regular_file())continue;
+            const auto utf8=entry.path().filename().u8string();
+            const std::string filename(utf8.begin(),utf8.end());
+            if(filename.starts_with("dividends_") && filename.ends_with(".csv") &&
+                valid_ticker(std::string_view(filename).substr(9,filename.size()-13)))files.push_back(entry.path());
         }
         if(files.empty())throw std::runtime_error("Нет сохранённых пользовательских файлов для копирования");
         std::ostringstream manifest;
