@@ -49,6 +49,7 @@ constexpr int ID_TABS = 1010, ID_TRADE_TICKER = 1011, ID_TRADE_QUANTITY = 1012,
               ID_PORT_TRANSACTIONS = 1049, ID_PORT_SUMMARY = 1050,
               ID_POSITION_STOP = 1051, ID_POSITION_TAKE = 1052, ID_POSITION_LEVELS_SAVE = 1053;
 constexpr int ID_DIVIDENDS_OPEN = 1054, ID_DIVIDENDS_LIST = 1055, ID_DIVIDENDS_REFRESH = 1056;
+constexpr int ID_CHART_TABS = 1057, ID_DIV_CHART_TABS = 1058, ID_DIV_CHART_RANGE = 1059;
 constexpr UINT_PTR TIMER_AUTO_REFRESH = 1;
 
 struct Instrument {
@@ -89,6 +90,9 @@ HWND g_dividend_window{};
 HWND g_dividend_list{};
 HWND g_dividend_info{};
 HWND g_dividend_refresh{};
+HWND g_chart_tabs{};
+HWND g_dividend_chart_tabs{};
+HWND g_dividend_chart_range{};
 HWND g_trade_list{};
 HWND g_trade_summary{};
 HWND g_trade_ticker{};
@@ -1167,238 +1171,220 @@ void remove_selected() {
     save_watchlist(); fill_list(); fill_signals(); g_signal_baseline_ready = false; InvalidateRect(g_window, nullptr, TRUE);
 }
 
-void draw_chart(HDC dc, RECT area, std::size_t instrument_index) {
+enum class ChartPanel { Price, Comparison, Volume, Rsi };
+ChartPanel g_chart_panel = ChartPanel::Price;
+ChartPanel g_dividend_chart_panel = ChartPanel::Price;
+int g_dividend_chart_sessions = 66;
+
+HWND create_chart_tabs(HWND parent, int id, int x, int y, int width) {
+    HWND tabs = CreateWindowExW(0, WC_TABCONTROLW, L"", WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | TCS_SINGLELINE,
+        x, y, width, 30, parent, reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), GetModuleHandleW(nullptr), nullptr);
+    if (g_font) SendMessageW(tabs, WM_SETFONT, reinterpret_cast<WPARAM>(g_font), TRUE);
+    const wchar_t* names[] = {L"Цена", L"Сравнение с IMOEX", L"Объёмы", L"RSI"};
+    for (int i = 0; i < 4; ++i) {
+        TCITEMW tab{}; tab.mask = TCIF_TEXT; tab.pszText = const_cast<wchar_t*>(names[i]);
+        TabCtrl_InsertItem(tabs, i, &tab);
+    }
+    TabCtrl_SetCurSel(tabs, 0);
+    return tabs;
+}
+
+void draw_chart(HDC dc, RECT area, std::size_t instrument_index, ChartPanel panel, int sessions) {
     FillRect(dc, &area, reinterpret_cast<HBRUSH>(COLOR_WINDOW + 1));
-    if (g_items.empty() || instrument_index >= g_items.size() || g_items[instrument_index].candles.empty()) {
-        SetBkMode(dc, TRANSPARENT);
-        DrawTextW(dc, L"Нет данных для графика. Выберите акцию и нажмите «Обновить».", -1, &area, DT_CENTER | DT_VCENTER | DT_WORDBREAK);
+    SetBkMode(dc, TRANSPARENT);
+    if (instrument_index >= g_items.size() || g_items[instrument_index].candles.empty()) {
+        DrawTextW(dc, L"Нет данных для графика. Выберите акцию и нажмите «Обновить».", -1,
+            &area, DT_CENTER | DT_VCENTER | DT_WORDBREAK);
         return;
     }
     const auto& item = g_items[instrument_index];
     const auto& candles = item.candles;
-    const auto active_position = open_position_for_ticker(item.ticker);
-    const auto* position_levels = active_position
-        ? levels_for_position(active_position->ticker, active_position->opened_on) : nullptr;
-    const auto sma20 = sma_series(candles, 20), sma50 = sma_series(candles, 50), sma200 = sma_series(candles, 200);
-    const auto rsi = rsi_series(candles);
-    const auto atr = atr_series(candles);
-    const auto volume_ratios = volume_ratio_series(candles);
     const std::size_t count = candles.size();
-    const std::size_t first = g_chart_sessions > 0 && count > static_cast<std::size_t>(g_chart_sessions)
-        ? count - static_cast<std::size_t>(g_chart_sessions) : 0;
-    const auto shown = count - first;
-    const auto comparison = normalized_comparison_series(candles, g_imoex_candles, first);
-    const LONG content_top = area.top + 56;
-    const LONG content_bottom = area.bottom - 23;
-    const LONG content_height = content_bottom - content_top;
-    const LONG price_height = content_height * 43 / 100;
-    const LONG comparison_height = content_height * 20 / 100;
-    const LONG volume_height = content_height * 17 / 100;
-    const LONG price_bottom = content_top + price_height;
-    const LONG comparison_bottom = price_bottom + comparison_height;
-    const LONG volume_bottom = comparison_bottom + volume_height;
-    RECT plot{area.left + 62, content_top + 16, area.right - 16, price_bottom};
-    RECT comparison_plot{plot.left, price_bottom + 16, plot.right, comparison_bottom};
-    RECT volume_plot{plot.left, comparison_bottom + 16, plot.right, volume_bottom};
-    RECT oscillator{plot.left, volume_bottom + 16, plot.right, content_bottom};
-    if (plot.right - plot.left < 30 || plot.bottom - plot.top < 25 || oscillator.bottom - oscillator.top < 10) return;
-    SetBkMode(dc, TRANSPARENT);
+    const std::size_t first = sessions > 0 && count > static_cast<std::size_t>(sessions)
+        ? count - static_cast<std::size_t>(sessions) : 0;
+    const std::size_t shown = count - first;
+    RECT plot{area.left + 80, area.top + (panel == ChartPanel::Price ? 76 : 58), area.right - 16, area.bottom - 28};
+    if (plot.right - plot.left < 40 || plot.bottom - plot.top < 40) return;
+    const int saved_dc = SaveDC(dc);
+    IntersectClipRect(dc, area.left, area.top, area.right, area.bottom);
     const auto text = [&](int x, int y, const std::string& value, COLORREF color) {
-        SetTextColor(dc, color); const auto label = widen(value);
-        TextOutW(dc, x, y, label.c_str(), static_cast<int>(label.size()));
+        SetTextColor(dc, color);
+        const auto label = widen(value);
+        RECT line{x, y, area.right - 4, y + 21};
+        DrawTextW(dc, label.c_str(), static_cast<int>(label.size()), &line, DT_LEFT | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
     };
-    text(area.left + 4, area.top, item.ticker + " | Дневные свечи" + (item.candles_stale ? " | УСТАРЕВШИЕ ДАННЫЕ" : ""), RGB(40, 50, 65));
-    text(area.left + 4, area.top + 19, "SMA20", RGB(232, 139, 43));
-    text(area.left + 80, area.top + 19, "SMA50", RGB(34, 105, 181));
-    text(area.left + 160, area.top + 19, "SMA200", RGB(135, 73, 170));
-    const auto current_atr = count == 0 ? std::optional<double>{} : atr.back();
-    const auto current_atr_percent = current_atr && candles.back().close > 0.0
-        ? std::optional<double>{*current_atr / candles.back().close * 100.0} : std::optional<double>{};
-    text(area.left + 4, area.top + 38,
-         "ATR(14): " + optional_number(current_atr) + " ₽ (" + percent(current_atr_percent) + ")" +
-         (g_imoex_stale ? " | IMOEX: история устарела" : " | IMOEX: обновлён"),
-         g_imoex_stale ? RGB(150, 90, 40) : RGB(65, 70, 90));
-    if (active_position) {
-        std::string position_legend = "Позиция: средняя " + money(active_position->average_entry_price);
-        if (position_levels && position_levels->stop_loss) position_legend += " | стоп " + money(*position_levels->stop_loss);
-        if (position_levels && position_levels->take_profit) position_legend += " | тейк " + money(*position_levels->take_profit);
-        text(area.left + 250, area.top + 19, position_legend, RGB(55, 65, 80));
-    }
-    double minimum = candles[first].low, maximum = candles[first].high;
-    for (std::size_t i = first; i < count; ++i) {
-        minimum = std::min(minimum, candles[i].low); maximum = std::max(maximum, candles[i].high);
-        for (const auto* average : {&sma20, &sma50, &sma200}) {
-            if ((*average)[i]) { minimum = std::min(minimum, *(*average)[i]); maximum = std::max(maximum, *(*average)[i]); }
-        }
-    }
-    if (active_position) {
-        minimum = std::min(minimum, active_position->average_entry_price);
-        maximum = std::max(maximum, active_position->average_entry_price);
-        if (position_levels && position_levels->stop_loss) {
-            minimum = std::min(minimum, *position_levels->stop_loss);
-            maximum = std::max(maximum, *position_levels->stop_loss);
-        }
-        if (position_levels && position_levels->take_profit) {
-            minimum = std::min(minimum, *position_levels->take_profit);
-            maximum = std::max(maximum, *position_levels->take_profit);
-        }
-    }
-    const double padding = std::max((maximum - minimum) * 0.06, maximum * 0.001);
-    minimum -= padding; maximum += padding;
-    const auto px = [&](std::size_t i) { return static_cast<int>(plot.left + (static_cast<double>(i - first) + 0.5) * static_cast<double>(plot.right - plot.left) / static_cast<double>(shown)); };
-    const auto py = [&](double value) { return static_cast<int>(plot.bottom - (value - minimum) / (maximum - minimum) * static_cast<double>(plot.bottom - plot.top)); };
-    const auto ry = [&](double value) { return static_cast<int>(oscillator.bottom - value / 100.0 * static_cast<double>(oscillator.bottom - oscillator.top)); };
-    double comparison_minimum = 100.0, comparison_maximum = 100.0;
-    bool has_comparison = false;
-    double volume_maximum = 0.0;
-    for (std::size_t i = first; i < count; ++i) {
-        for (const auto* values : {&comparison.stock, &comparison.benchmark}) {
-            if ((*values)[i]) {
-                comparison_minimum = has_comparison ? std::min(comparison_minimum, *(*values)[i]) : *(*values)[i];
-                comparison_maximum = has_comparison ? std::max(comparison_maximum, *(*values)[i]) : *(*values)[i];
-                has_comparison = true;
+    const auto x_at = [&](std::size_t i) {
+        return static_cast<int>(plot.left + (static_cast<double>(i - first) + 0.5) *
+            static_cast<double>(plot.right - plot.left) / static_cast<double>(shown));
+    };
+    const COLORREF blue = RGB(34, 105, 181), orange = RGB(232, 139, 43), purple = RGB(135, 73, 170);
+    const COLORREF gray = RGB(85, 95, 110);
+    std::vector<std::optional<double>> primary, secondary, sma20, sma50, sma200;
+    std::optional<PortfolioPosition> position;
+    const PositionLevels* position_levels = nullptr;
+    double minimum = 0.0, maximum = 1.0;
+    std::string heading = item.ticker;
+    if (item.candles_stale) heading += " | история устарела";
+
+    if (panel == ChartPanel::Price) {
+        heading += " | Дневные свечи";
+        sma20 = sma_series(candles, 20); sma50 = sma_series(candles, 50); sma200 = sma_series(candles, 200);
+        minimum = candles[first].low; maximum = candles[first].high;
+        for (std::size_t i = first; i < count; ++i) {
+            minimum = std::min(minimum, candles[i].low); maximum = std::max(maximum, candles[i].high);
+            for (const auto* values : {&sma20, &sma50, &sma200}) {
+                if ((*values)[i]) { minimum = std::min(minimum, *(*values)[i]); maximum = std::max(maximum, *(*values)[i]); }
             }
         }
-        volume_maximum = std::max(volume_maximum, candles[i].volume);
+        position = open_position_for_ticker(item.ticker);
+        if (position) {
+            position_levels = levels_for_position(position->ticker, position->opened_on);
+            minimum = std::min(minimum, position->average_entry_price);
+            maximum = std::max(maximum, position->average_entry_price);
+            if (position_levels) {
+                for (const auto level : {position_levels->stop_loss, position_levels->take_profit}) {
+                    if (level) { minimum = std::min(minimum, *level); maximum = std::max(maximum, *level); }
+                }
+            }
+        }
+        text(area.left + 4, area.top + 22, "SMA20", orange);
+        text(area.left + 92, area.top + 22, "SMA50", blue);
+        text(area.left + 180, area.top + 22, "SMA200", purple);
+        const auto atr = atr_series(candles).back();
+        const auto atr_percent = atr && candles.back().close > 0.0
+            ? std::optional<double>{*atr / candles.back().close * 100.0} : std::optional<double>{};
+        std::string detail = "ATR(14): " + optional_number(atr) + " ₽ (" + percent(atr_percent) + ")";
+        if (!item.dividends.empty()) detail += " | D: дата отсечки";
+        text(area.left + 4, area.top + 44, detail, gray);
+    } else if (panel == ChartPanel::Comparison) {
+        heading += " | Сравнение с IMOEX, база 100";
+        const auto comparison = normalized_comparison_series(candles, g_imoex_candles, first);
+        primary = comparison.stock; secondary = comparison.benchmark;
+        minimum = 100.0; maximum = 100.0;
+        std::optional<double> stock_last, index_last;
+        for (std::size_t i = first; i < count; ++i) {
+            if (primary[i] && secondary[i]) {
+                minimum = std::min({minimum, *primary[i], *secondary[i]});
+                maximum = std::max({maximum, *primary[i], *secondary[i]});
+                stock_last = *primary[i] - 100.0; index_last = *secondary[i] - 100.0;
+            }
+        }
+        if (!stock_last) {
+            text(area.left + 4, area.top, heading, gray);
+            RECT message = plot;
+            DrawTextW(dc, L"Нет общих дневных дат с IMOEX. Нажмите «Обновить» в основном окне.", -1,
+                &message, DT_CENTER | DT_VCENTER | DT_WORDBREAK);
+            RestoreDC(dc, saved_dc); return;
+        }
+        text(area.left + 4, area.top + 22, "Акция (синяя): " + percent(stock_last) + " | IMOEX (оранжевая): " + percent(index_last) +
+            (g_imoex_stale ? " | IMOEX устарел" : ""), gray);
+    } else if (panel == ChartPanel::Volume) {
+        heading += " | Дневной объём, акций";
+        secondary = volume_ratio_series(candles);
+        maximum = 0.0;
+        for (std::size_t i = first; i < count; ++i) maximum = std::max(maximum, candles[i].volume);
+        maximum = maximum > 0.0 ? maximum * 1.1 : 1.0;
+        text(area.left + 4, area.top + 22, "Последний: " + optional_number(secondary.back()) +
+            "× среднего20 | оранжевый: >2× предыдущих 20 сессий", gray);
+    } else {
+        primary = rsi_series(candles);
+        heading += " | RSI(14) Уайлдера: " + optional_number(primary.back());
+        maximum = 100.0;
+        text(area.left + 4, area.top + 22, "Ниже 30: перепроданность | выше 70: перекупленность", gray);
     }
-    if (!has_comparison) { comparison_minimum = 90.0; comparison_maximum = 110.0; }
-    const double comparison_padding = std::max((comparison_maximum - comparison_minimum) * 0.12, 1.0);
-    comparison_minimum -= comparison_padding; comparison_maximum += comparison_padding;
-    const auto cy = [&](double value) {
-        return static_cast<int>(comparison_plot.bottom - (value - comparison_minimum) /
-            (comparison_maximum - comparison_minimum) * static_cast<double>(comparison_plot.bottom - comparison_plot.top));
+    text(area.left + 4, area.top, heading, RGB(40, 50, 65));
+    if (panel == ChartPanel::Price || panel == ChartPanel::Comparison) {
+        const double padding = std::max((maximum - minimum) * 0.07, std::max(std::abs(maximum) * 0.001, 0.01));
+        minimum -= padding; maximum += padding;
+    }
+    const auto y_at = [&](double value) {
+        return static_cast<int>(plot.bottom - (value - minimum) / (maximum - minimum) *
+            static_cast<double>(plot.bottom - plot.top));
     };
+    if (panel == ChartPanel::Rsi) {
+        RECT high_band{plot.left, plot.top, plot.right, y_at(70.0)};
+        RECT low_band{plot.left, y_at(30.0), plot.right, plot.bottom};
+        HBRUSH high_brush = CreateSolidBrush(RGB(255, 235, 236));
+        HBRUSH low_brush = CreateSolidBrush(RGB(230, 247, 239));
+        FillRect(dc, &high_band, high_brush); FillRect(dc, &low_band, low_brush);
+        DeleteObject(high_brush); DeleteObject(low_brush);
+    }
     HPEN grid = CreatePen(PS_SOLID, 1, RGB(225, 231, 238));
     HGDIOBJ old_pen = SelectObject(dc, grid);
+    const double rsi_levels[] = {0.0, 30.0, 50.0, 70.0, 100.0};
     for (int k = 0; k <= 4; ++k) {
-        const double price = minimum + (maximum - minimum) * static_cast<double>(k) / 4.0;
-        const int y = py(price); MoveToEx(dc, plot.left, y, nullptr); LineTo(dc, plot.right, y);
-        text(area.left + 1, y - 8, format_price(price), RGB(90, 99, 109));
+        const double value = panel == ChartPanel::Rsi ? rsi_levels[k] : minimum + (maximum - minimum) * static_cast<double>(k) / 4.0;
+        const int y = y_at(value);
+        MoveToEx(dc, plot.left, y, nullptr); LineTo(dc, plot.right, y);
+        std::string label = format_price(value);
+        if (panel == ChartPanel::Volume) {
+            if (value >= 1e9) label = money(value / 1e9) + " млрд";
+            else if (value >= 1e6) label = money(value / 1e6) + " млн";
+            else if (value >= 1e3) label = money(value / 1e3) + " тыс";
+        }
+        text(area.left + 2, y - 8, label, gray);
     }
     SelectObject(dc, old_pen); DeleteObject(grid);
-    const int half = std::clamp(static_cast<int>((plot.right - plot.left) / static_cast<LONG>(shown) / 3), 1, 6);
-    for (std::size_t i = first; i < count; ++i) {
-        const auto& candle = candles[i];
-        const COLORREF color = candle.close >= candle.open ? RGB(29, 144, 100) : RGB(207, 66, 78);
-        HPEN pen = CreatePen(PS_SOLID, 1, color); HBRUSH brush = CreateSolidBrush(color);
-        old_pen = SelectObject(dc, pen); HGDIOBJ old_brush = SelectObject(dc, brush);
-        const int x = px(i); MoveToEx(dc, x, py(candle.high), nullptr); LineTo(dc, x, py(candle.low));
-        const int top = std::min(py(candle.open), py(candle.close));
-        const int bottom = std::max(top + 1, std::max(py(candle.open), py(candle.close)));
-        Rectangle(dc, x - half, top, x + half + 1, bottom + 1);
-        SelectObject(dc, old_brush); SelectObject(dc, old_pen); DeleteObject(brush); DeleteObject(pen);
+    const auto draw_series = [&](const std::vector<std::optional<double>>& values, COLORREF color) {
+        HPEN pen = CreatePen(PS_SOLID, 2, color);
+        HGDIOBJ previous = SelectObject(dc, pen);
+        bool started = false;
+        for (std::size_t i = first; i < count; ++i) {
+            if (!values[i]) { started = false; continue; }
+            const int x = x_at(i), y = y_at(*values[i]);
+            if (started) LineTo(dc, x, y); else { MoveToEx(dc, x, y, nullptr); started = true; }
+        }
+        SelectObject(dc, previous); DeleteObject(pen);
+    };
+    const int half = std::clamp(static_cast<int>((plot.right - plot.left) / static_cast<LONG>(shown) / 3), 1, 10);
+    if (panel == ChartPanel::Price || panel == ChartPanel::Volume) {
+        for (std::size_t i = first; i < count; ++i) {
+            const auto& candle = candles[i];
+            const bool spike = panel == ChartPanel::Volume && secondary[i] && *secondary[i] > 2.0;
+            const COLORREF color = spike ? orange : (candle.close >= candle.open ? RGB(29, 144, 100) : RGB(207, 66, 78));
+            HPEN pen = CreatePen(PS_SOLID, 1, color); HBRUSH brush = CreateSolidBrush(color);
+            HGDIOBJ previous_pen = SelectObject(dc, pen), previous_brush = SelectObject(dc, brush);
+            const int x = x_at(i);
+            if (panel == ChartPanel::Price) {
+                MoveToEx(dc, x, y_at(candle.high), nullptr); LineTo(dc, x, y_at(candle.low));
+                const int top = std::min(y_at(candle.open), y_at(candle.close));
+                const int bottom = std::max(top + 1, std::max(y_at(candle.open), y_at(candle.close)));
+                Rectangle(dc, x - half, top, x + half + 1, bottom + 1);
+            } else {
+                RECT bar{x - half, y_at(candle.volume), x + half + 1, plot.bottom};
+                FillRect(dc, &bar, brush);
+            }
+            SelectObject(dc, previous_brush); SelectObject(dc, previous_pen); DeleteObject(brush); DeleteObject(pen);
+        }
     }
-    if (!item.dividends.empty()) {
-        HPEN event_pen = CreatePen(PS_DOT, 1, RGB(190, 91, 40));
-        old_pen = SelectObject(dc, event_pen);
+    if (panel == ChartPanel::Price) {
+        draw_series(sma20, orange); draw_series(sma50, blue); draw_series(sma200, purple);
+        const auto draw_level = [&](double value, const std::string& label, COLORREF color) {
+            HPEN pen = CreatePen(PS_DASH, 1, color); HGDIOBJ previous = SelectObject(dc, pen);
+            const int y = y_at(value); MoveToEx(dc, plot.left, y, nullptr); LineTo(dc, plot.right, y);
+            SelectObject(dc, previous); DeleteObject(pen);
+            text(std::max(plot.left + 4, plot.right - 180), y - 19, label + " " + money(value), color);
+        };
+        if (position) {
+            draw_level(position->average_entry_price, "Средняя", gray);
+            if (position_levels && position_levels->stop_loss) draw_level(*position_levels->stop_loss, "Стоп", RGB(200, 55, 65));
+            if (position_levels && position_levels->take_profit) draw_level(*position_levels->take_profit, "Тейк", RGB(25, 135, 90));
+        }
+        HPEN event_pen = CreatePen(PS_DOT, 1, RGB(190, 91, 40)); old_pen = SelectObject(dc, event_pen);
         for (const auto& event : item.dividends) {
-            const auto candle_it = std::lower_bound(candles.begin() + static_cast<std::ptrdiff_t>(first), candles.end(),
-                event.record_date, [](const Candle& candle, const std::string& date) {
-                    return candle.date.substr(0, 10) < date;
-                });
-            if (candle_it == candles.end() || candle_it->date.substr(0, 10) != event.record_date) continue;
-            const auto index = static_cast<std::size_t>(candle_it - candles.begin());
-            const int x = px(index);
-            MoveToEx(dc, x, plot.top, nullptr); LineTo(dc, x, oscillator.bottom);
-            Ellipse(dc, x - 4, plot.top - 7, x + 5, plot.top + 2);
+            for (std::size_t i = first; i < count; ++i) {
+                if (candles[i].date.substr(0, 10) != event.record_date) continue;
+                const int x = x_at(i); MoveToEx(dc, x, plot.top, nullptr); LineTo(dc, x, plot.bottom);
+                text(x + 3, plot.top + 2, "D", RGB(160, 80, 30)); break;
+            }
         }
         SelectObject(dc, old_pen); DeleteObject(event_pen);
-        text(area.left + 250, area.top + 38, "Метки: даты фиксации реестра из MOEX ISS", RGB(160, 80, 30));
-    }
-    const auto draw_line = [&](const std::vector<std::optional<double>>& values, COLORREF color, bool is_rsi) {
-        HPEN pen = CreatePen(PS_SOLID, 2, color); HGDIOBJ previous = SelectObject(dc, pen);
-        bool started = false;
-        for (std::size_t i = first; i < count; ++i) {
-            if (!values[i]) { started = false; continue; }
-            const int x = px(i), y = is_rsi ? ry(*values[i]) : py(*values[i]);
-            if (!started) { MoveToEx(dc, x, y, nullptr); started = true; } else LineTo(dc, x, y);
-        }
-        SelectObject(dc, previous); DeleteObject(pen);
-    };
-    draw_line(sma20, RGB(232, 139, 43), false);
-    draw_line(sma50, RGB(34, 105, 181), false);
-    draw_line(sma200, RGB(135, 73, 170), false);
-    const auto latest_value = [&](const std::vector<std::optional<double>>& values) -> std::optional<double> {
-        for (std::size_t i = count; i > first; --i) if (values[i - 1]) return values[i - 1];
-        return std::nullopt;
-    };
-    const auto stock_performance = latest_value(comparison.stock);
-    const auto index_performance = latest_value(comparison.benchmark);
-    std::string comparison_title = "Сравнение с начала периода, база 100: акция ";
-    comparison_title += stock_performance ? percent(*stock_performance - 100.0) : "н/д";
-    comparison_title += " | IMOEX ";
-    comparison_title += index_performance ? percent(*index_performance - 100.0) : "нет общих дат";
-    text(area.left + 4, price_bottom + 1, comparison_title, RGB(65, 70, 90));
-    HPEN comparison_grid = CreatePen(PS_SOLID, 1, RGB(230, 233, 238));
-    old_pen = SelectObject(dc, comparison_grid);
-    for (double level : {comparison_minimum + comparison_padding, 100.0, comparison_maximum - comparison_padding}) {
-        const int y = cy(level); MoveToEx(dc, comparison_plot.left, y, nullptr); LineTo(dc, comparison_plot.right, y);
-    }
-    SelectObject(dc, old_pen); DeleteObject(comparison_grid);
-    const auto draw_comparison_line = [&](const std::vector<std::optional<double>>& values, COLORREF color) {
-        HPEN pen = CreatePen(PS_SOLID, 2, color); HGDIOBJ previous = SelectObject(dc, pen);
-        bool started = false;
-        for (std::size_t i = first; i < count; ++i) {
-            if (!values[i]) { started = false; continue; }
-            const int x = px(i), y = cy(*values[i]);
-            if (!started) { MoveToEx(dc, x, y, nullptr); started = true; } else LineTo(dc, x, y);
-        }
-        SelectObject(dc, previous); DeleteObject(pen);
-    };
-    draw_comparison_line(comparison.stock, RGB(34, 105, 181));
-    draw_comparison_line(comparison.benchmark, RGB(232, 139, 43));
-    std::string volume_title = "Объём: ";
-    const auto current_volume_ratio = volume_ratios.back();
-    volume_title += current_volume_ratio ? optional_number(current_volume_ratio) + "× среднего за 20 сессий" : "недостаточно истории для среднего20";
-    if (current_volume_ratio && *current_volume_ratio > 2.0) volume_title += " — всплеск >2×";
-    text(area.left + 4, comparison_bottom + 1, volume_title,
-         current_volume_ratio && *current_volume_ratio > 2.0 ? RGB(190, 95, 20) : RGB(65, 70, 90));
-    if (volume_maximum > 0.0) {
-        const int bar_half = std::clamp(static_cast<int>((volume_plot.right - volume_plot.left) /
-            static_cast<LONG>(shown) / 3), 1, 6);
-        for (std::size_t i = first; i < count; ++i) {
-            const int x = px(i);
-            const int y = static_cast<int>(volume_plot.bottom - candles[i].volume / volume_maximum *
-                static_cast<double>(volume_plot.bottom - volume_plot.top));
-            const bool spike = volume_ratios[i] && *volume_ratios[i] > 2.0;
-            const COLORREF color = spike ? RGB(235, 133, 35) :
-                (candles[i].close >= candles[i].open ? RGB(70, 164, 126) : RGB(205, 104, 112));
-            HBRUSH brush = CreateSolidBrush(color);
-            RECT bar{x - bar_half, y, x + bar_half + 1, volume_plot.bottom};
-            FillRect(dc, &bar, brush); DeleteObject(brush);
-        }
-    }
-    const auto draw_position_level = [&](double value, const std::string& label, COLORREF color) {
-        HPEN pen = CreatePen(PS_DASH, 1, color);
-        HGDIOBJ previous = SelectObject(dc, pen);
-        const int y = py(value);
-        MoveToEx(dc, plot.left, y, nullptr); LineTo(dc, plot.right, y);
-        SelectObject(dc, previous); DeleteObject(pen);
-        text(std::max(plot.left + 4, plot.right - 150), y - 15, label + " " + money(value), color);
-    };
-    if (active_position) {
-        draw_position_level(active_position->average_entry_price, "Средняя", RGB(70, 90, 120));
-        if (position_levels && position_levels->stop_loss)
-            draw_position_level(*position_levels->stop_loss, "Стоп", RGB(200, 55, 65));
-        if (position_levels && position_levels->take_profit)
-            draw_position_level(*position_levels->take_profit, "Тейк", RGB(25, 135, 90));
-    }
-    const auto fill_band = [&](int top, int bottom, COLORREF color) {
-        RECT band{oscillator.left, top, oscillator.right, bottom}; HBRUSH brush = CreateSolidBrush(color);
-        FillRect(dc, &band, brush); DeleteObject(brush);
-    };
-    fill_band(oscillator.top, ry(70.0), RGB(255, 235, 236));
-    fill_band(ry(30.0), oscillator.bottom, RGB(230, 247, 239));
-    text(area.left + 4, volume_bottom + 1, "RSI14 Уайлдера: " + optional_number(rsi.back()) + " | уровни 30 / 70", RGB(65, 70, 90));
-    HPEN levels = CreatePen(PS_DASH, 1, RGB(155, 160, 170)); old_pen = SelectObject(dc, levels);
-    for (double level : {0.0, 30.0, 50.0, 70.0, 100.0}) {
-        const int y = ry(level); MoveToEx(dc, oscillator.left, y, nullptr); LineTo(dc, oscillator.right, y);
-        text(area.left + 20, y - 7, std::to_string(static_cast<int>(level)), RGB(95, 105, 115));
-    }
-    SelectObject(dc, old_pen); DeleteObject(levels);
-    draw_line(rsi, RGB(105, 67, 176), true);
-    text(plot.left, area.bottom - 19, candles[first].date.substr(0, 10), RGB(90, 99, 109));
-    text(plot.right - 98, area.bottom - 19, candles.back().date.substr(0, 10), RGB(90, 99, 109));
+    } else if (panel == ChartPanel::Comparison) {
+        draw_series(primary, blue); draw_series(secondary, orange);
+    } else if (panel == ChartPanel::Rsi) draw_series(primary, purple);
+    text(plot.left, area.bottom - 22, candles[first].date.substr(0, 10), gray);
+    text(plot.right - 98, area.bottom - 22, candles.back().date.substr(0, 10), gray);
+    RestoreDC(dc, saved_dc);
 }
 
 void fill_dividend_list() {
@@ -1480,7 +1466,15 @@ LRESULT CALLBACK dividends_window_proc(HWND window, UINT message, WPARAM wparam,
             SendMessageW(g_dividend_list, WM_SETFONT, reinterpret_cast<WPARAM>(g_font), TRUE);
             SendMessageW(g_dividend_refresh, WM_SETFONT, reinterpret_cast<WPARAM>(g_font), TRUE);
         }
-        refresh_dividend_events();
+        g_dividend_chart_tabs = create_chart_tabs(window, ID_DIV_CHART_TABS, 12, 289, 800);
+        g_dividend_chart_range = CreateWindowExW(0, L"COMBOBOX", L"", WS_CHILD | WS_VISIBLE | CBS_DROPDOWNLIST | WS_VSCROLL,
+            870, 289, 280, 180, window, reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_DIV_CHART_RANGE)), GetModuleHandleW(nullptr), nullptr);
+        if (g_font) SendMessageW(g_dividend_chart_range, WM_SETFONT, reinterpret_cast<WPARAM>(g_font), TRUE);
+        const wchar_t* ranges[] = {L"1 месяц (~22 сессии)", L"3 месяца (~66 сессий)", L"1 год (~252 сессии)", L"Вся загруженная история"};
+        for (const auto* range : ranges) SendMessageW(g_dividend_chart_range, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(range));
+        g_dividend_chart_panel = ChartPanel::Price; g_dividend_chart_sessions = 66;
+        SendMessageW(g_dividend_chart_range, CB_SETCURSEL, 1, 0);
+        fill_dividend_list(); refresh_dividend_events();
         return 0;
     }
     case WM_SIZE: {
@@ -1488,11 +1482,28 @@ LRESULT CALLBACK dividends_window_proc(HWND window, UINT message, WPARAM wparam,
         if (g_dividend_info) MoveWindow(g_dividend_info, 12, 10, width - 185, 68, TRUE);
         if (g_dividend_refresh) MoveWindow(g_dividend_refresh, width - 172, 8, 160, 28, TRUE);
         if (g_dividend_list) MoveWindow(g_dividend_list, 12, 86, width - 24, std::clamp(height / 4, 150, 195), TRUE);
+        if (g_dividend_chart_tabs) MoveWindow(g_dividend_chart_tabs, 12, 289, width - 315, 30, TRUE);
+        if (g_dividend_chart_range) MoveWindow(g_dividend_chart_range, width - 292, 289, 280, 180, TRUE);
+        InvalidateRect(window, nullptr, TRUE);
         return 0;
     }
     case WM_COMMAND:
         if (LOWORD(wparam) == ID_DIVIDENDS_REFRESH) { refresh_dividend_events(); return 0; }
+        if (LOWORD(wparam) == ID_DIV_CHART_RANGE && HIWORD(wparam) == CBN_SELCHANGE) {
+            const int ranges[] = {22, 66, 252, 0};
+            const auto index = SendMessageW(g_dividend_chart_range, CB_GETCURSEL, 0, 0);
+            if (index >= 0 && index < 4) g_dividend_chart_sessions = ranges[index];
+            InvalidateRect(window, nullptr, TRUE); return 0;
+        }
         break;
+    case WM_NOTIFY: {
+        const auto* notice = reinterpret_cast<const NMHDR*>(lparam);
+        if (notice->idFrom == ID_DIV_CHART_TABS && notice->code == TCN_SELCHANGE) {
+            g_dividend_chart_panel = static_cast<ChartPanel>(std::clamp(TabCtrl_GetCurSel(g_dividend_chart_tabs), 0, 3));
+            InvalidateRect(window, nullptr, TRUE); return 0;
+        }
+        break;
+    }
     case WM_DIVIDENDS_READY: {
         std::unique_ptr<DividendFetchResult> result(reinterpret_cast<DividendFetchResult*>(lparam));
         if (wparam != g_dividend_request) return 0;
@@ -1522,9 +1533,9 @@ LRESULT CALLBACK dividends_window_proc(HWND window, UINT message, WPARAM wparam,
     case WM_PAINT: {
         PAINTSTRUCT ps{}; HDC dc = BeginPaint(window, &ps);
         RECT client{}; GetClientRect(window, &client);
-        RECT chart{client.left + 8, 295, client.right - 8, client.bottom - 8};
+        RECT chart{client.left + 8, 330, client.right - 8, client.bottom - 8};
         const auto old_font = g_font ? SelectObject(dc, g_font) : nullptr;
-        draw_chart(dc, chart, g_dividend_instrument);
+        draw_chart(dc, chart, g_dividend_instrument, g_dividend_chart_panel, g_dividend_chart_sessions);
         if (g_font) SelectObject(dc, old_font);
         EndPaint(window, &ps); return 0;
     }
@@ -1534,6 +1545,7 @@ LRESULT CALLBACK dividends_window_proc(HWND window, UINT message, WPARAM wparam,
     }
     case WM_NCDESTROY:
         ++g_dividend_request;
+        g_dividend_chart_tabs = nullptr; g_dividend_chart_range = nullptr;
         g_dividend_window = nullptr; g_dividend_list = nullptr; g_dividend_info = nullptr; g_dividend_refresh = nullptr;
         break;
     }
@@ -1705,6 +1717,8 @@ void create_controls(HWND window) {
     g_analysis = CreateWindowExW(0, L"STATIC", L"", WS_CHILD | WS_VISIBLE | SS_LEFT, 610, 184, 690, 245, window, nullptr, GetModuleHandleW(nullptr), nullptr);
     g_market_controls.push_back(g_analysis);
     if (g_font) SendMessageW(g_analysis, WM_SETFONT, reinterpret_cast<WPARAM>(g_font), TRUE);
+    g_chart_tabs = create_chart_tabs(window, ID_CHART_TABS, 610, 435, 690);
+    g_market_controls.push_back(g_chart_tabs);
 
     g_building_trade_page = true;
     add_control(window, L"STATIC", L"Тикер", 0, 16, 59, 45, 24, 0);
@@ -1897,6 +1911,7 @@ LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lp
         if (g_tabs) MoveWindow(g_tabs, 16, 8, width - 32, 34, TRUE);
         if (g_list) MoveWindow(g_list, 16, 184, std::max(360, width * 44 / 100), height - 204, TRUE);
         if (g_analysis) MoveWindow(g_analysis, width * 46 / 100, 184, width * 52 / 100 - 16, 245, TRUE);
+        if (g_chart_tabs) MoveWindow(g_chart_tabs, width * 46 / 100, 435, width - width * 46 / 100 - 16, 30, TRUE);
         if (g_trade_summary) MoveWindow(g_trade_summary, 16, 153, width - 32, 26, TRUE);
         if (g_trade_list) MoveWindow(g_trade_list, 16, 184, width - 32, height - 204, TRUE);
         if (g_signal_summary) MoveWindow(g_signal_summary, 16, 170, width - 32, 25, TRUE);
@@ -1947,6 +1962,10 @@ LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lp
         }
         break;
     case WM_NOTIFY:
+        if (reinterpret_cast<NMHDR*>(lparam)->idFrom == ID_CHART_TABS && reinterpret_cast<NMHDR*>(lparam)->code == TCN_SELCHANGE) {
+            g_chart_panel = static_cast<ChartPanel>(std::clamp(TabCtrl_GetCurSel(g_chart_tabs), 0, 3));
+            InvalidateRect(window, nullptr, TRUE); return 0;
+        }
         if (reinterpret_cast<NMHDR*>(lparam)->idFrom == ID_TABS && reinterpret_cast<NMHDR*>(lparam)->code == TCN_SELCHANGE) {
             activate_page(TabCtrl_GetCurSel(g_tabs)); return 0;
         }
@@ -1999,6 +2018,7 @@ LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lp
         status += g_imoex_stale ? L"IMOEX не обновлён; сравнение использует старые данные. " : L"IMOEX обновлён. ";
         status += L"Подробности — в выбранной акции.";
         SetWindowTextW(g_status, status.c_str());
+        if (g_dividend_window) { fill_dividend_list(); InvalidateRect(g_dividend_window, nullptr, TRUE); }
         fill_list(); fill_signals(); fill_portfolio(); notify_new_signals(); return 0;
     }
     case WM_DIVIDENDS_READY:
@@ -2017,9 +2037,9 @@ LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lp
         PAINTSTRUCT ps{}; HDC dc = BeginPaint(window, &ps);
         if (g_active_page == 0) {
             RECT client{}; GetClientRect(window, &client);
-            RECT chart{client.left + client.right * 46 / 100, 445, client.right - 16, client.bottom - 20};
+            RECT chart{client.left + client.right * 46 / 100, 475, client.right - 16, client.bottom - 20};
             const auto old_font = SelectObject(dc, g_font);
-            draw_chart(dc, chart, g_selected);
+            draw_chart(dc, chart, g_selected, g_chart_panel, g_chart_sessions);
             SelectObject(dc, old_font);
         }
         EndPaint(window, &ps); return 0;
@@ -2046,7 +2066,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
     dividend_wc.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_WINDOW + 1);
     dividend_wc.lpszClassName = L"MOEXWatchDividendWindow";
     if (!RegisterClassExW(&dividend_wc)) return 1;
-    HWND window = CreateWindowExW(0, wc.lpszClassName, L"MOEX Watch 0.5.0 — аналитика и портфель", WS_OVERLAPPEDWINDOW,
+    HWND window = CreateWindowExW(0, wc.lpszClassName, L"MOEX Watch 0.5.1 — аналитика и портфель", WS_OVERLAPPEDWINDOW,
                                   CW_USEDEFAULT, CW_USEDEFAULT, 1340, 870, nullptr, nullptr, instance, nullptr);
     if (!window) return 2;
     ShowWindow(window, show); UpdateWindow(window);

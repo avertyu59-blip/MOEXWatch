@@ -8,4 +8,4 @@ ctest --test-dir (Join-Path $PSScriptRoot 'build') -C Release --output-on-failur
 if ($LASTEXITCODE -ne 0) { throw 'Tests failed.' }
 
 Copy-Item (Join-Path $PSScriptRoot 'build\Release\moexwatch.exe') (Join-Path $PSScriptRoot 'MOEXWatch.exe') -Force
-Write-Host "MOEX Watch 0.5.0 built: $(Join-Path $PSScriptRoot 'MOEXWatch.exe')"
+Write-Host "MOEX Watch 0.5.1 built: $(Join-Path $PSScriptRoot 'MOEXWatch.exe')"
