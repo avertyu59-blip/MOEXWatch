@@ -280,8 +280,9 @@ std::filesystem::path create_backup(const std::filesystem::path& root) {
             if(!entry.is_regular_file())continue;
             const auto utf8=entry.path().filename().u8string();
             const std::string filename(utf8.begin(),utf8.end());
-            if(filename.starts_with("dividends_") && filename.ends_with(".csv") &&
-                valid_ticker(std::string_view(filename).substr(9,filename.size()-13)))files.push_back(entry.path());
+            constexpr std::string_view prefix="dividends_";
+            if(filename.starts_with(prefix) && filename.ends_with(".csv") &&
+                valid_ticker(std::string_view(filename).substr(prefix.size(),filename.size()-prefix.size()-4)))files.push_back(entry.path());
         }
         if(files.empty())throw std::runtime_error("Нет сохранённых пользовательских файлов для копирования");
         std::ostringstream manifest;
