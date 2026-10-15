@@ -18,7 +18,7 @@ else()
 endif()
 
 if(WIN32)
-  add_library(moex_ui src/ui_shell.cpp src/ui_common.cpp src/ui_backtest.cpp src/market_data.cpp src/portfolio_import_ui.cpp src/table_sort_win.cpp src/observation_ui.cpp)
+  add_library(moex_ui src/ui_shell.cpp src/ui_common.cpp src/ui_backtest.cpp src/ui_signals.cpp src/market_data.cpp src/portfolio_import_ui.cpp src/table_sort_win.cpp src/observation_ui.cpp)
   target_link_libraries(moex_ui PUBLIC market_core winhttp comctl32 gdi32 user32 shell32 comdlg32)
   target_compile_definitions(moex_ui PUBLIC UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX)
   if(MSVC)

@@ -1,5 +1,10 @@
 #pragma once
 #ifdef _WIN32
+#include "ui_trades.hpp"
+#include "ui_charts.hpp"
+#include "ui_portfolio.hpp"
+#include "ui_signals.hpp"
+#include "ui_backtest.hpp"
 #include "market_core.hpp"
 #include "app_models.hpp"
 #include "storage.hpp"
@@ -64,96 +69,13 @@ constexpr int ID_CHART_TABS = 1057, ID_DIV_CHART_TABS = 1058, ID_DIV_CHART_RANGE
 constexpr UINT_PTR TIMER_AUTO_REFRESH = 1;
 
 
-enum class ChartPanel { Price, Comparison, Volume, Rsi };
-struct BacktestState {
-    HWND ticker{};
-    HWND capital{};
-    HWND fee{};
-    HWND run{};
-    HWND result{};
-    bool building_backtest_page = false;
-    std::atomic<bool> busy{false};
-    std::vector<HWND> controls;
-};
-struct SignalsState {
-    HWND observation_page{};
-    HWND list{};
-    HWND summary{};
-    HWND oversold_value{};
-    HWND overbought_value{};
-    HWND target_value{};
-    HWND interval{};
-    bool building_signal_page = false;
-    std::vector<HWND> controls;
-    SignalSettings settings;
-    ObservationEngine observer;
-    std::vector<SignalEvent> history;
-    std::string observation_error;
-    std::string observation_status="Первый свежий ответ задаёт исходное состояние без уведомления.";
-    bool observation_writable=true;
-    bool history_dirty=false;
-    bool baseline_ready = false;
-    NOTIFYICONDATAW notification_icon{};
-    bool notification_icon_ready = false;
-};
-struct PortfolioState {
-    HWND date{};
-    HWND ticker{};
-    HWND side{};
-    HWND quantity{};
-    HWND price{};
-    HWND commission{};
-    HWND add{};
-    HWND delete_button{};
-    HWND positions{};
-    HWND transactions_list{};
-    HWND summary{};
-    HWND position_stop{};
-    HWND position_take{};
-    HWND position_levels_save{};
-    bool building_portfolio_page = false;
-    std::vector<HWND> controls;
-    std::vector<PortfolioTransaction> transactions;
-    std::vector<PositionLevels> position_levels;
-};
-struct ChartsState {
-    HWND list{};
-    HWND ticker_edit{};
-    HWND target_edit{};
-    HWND status{};
-    HWND analysis{};
-    HWND dividend_window{};
-    HWND dividend_list{};
-    HWND dividend_info{};
-    HWND dividend_refresh{};
-    HWND chart_tabs{};
-    HWND dividend_chart_tabs{};
-    HWND dividend_chart_range{};
-    std::size_t selected{};
-    std::size_t dividend_instrument{};
-    unsigned int dividend_request{};
-    std::vector<std::size_t> visible;
-    std::vector<HWND> market_controls;
-    WatchFilter filter = WatchFilter::All;
-    int chart_sessions = 66;
-    ChartPanel chart_panel = ChartPanel::Price;
-    ChartPanel dividend_chart_panel = ChartPanel::Price;
-    int dividend_chart_sessions = 66;
-};
-struct TradesState {
-    HWND list{};
-    HWND summary{};
-    HWND ticker{};
-    HWND quantity{};
-    HWND buy{};
-    HWND sell{};
-    HWND commission{};
-    HWND tax{};
-    bool building_trade_page = false;
-    std::vector<HWND> controls;
-    std::vector<Trade> records;
-};
-struct BacktestUiResult { std::string text; bool failed{}; };
+
+
+
+
+
+
+
 struct BackupResult { std::filesystem::path path; std::string error; };
 // UI-thread owner. Pages share market/model data through this explicit owner.
 // Each page keeps its own controls and transient UI state in the structs above.
