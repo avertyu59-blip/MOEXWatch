@@ -30,9 +30,16 @@ struct Analysis {
     std::optional<double> sma200;
     std::optional<double> rsi14;
     std::optional<double> volume_ratio20;
+    std::optional<double> atr14;
+    std::optional<double> atr_percent;
     std::optional<double> drawdown_percent;
     std::optional<double> period_change_percent;
     std::string technical_note;
+};
+
+struct NormalizedComparison {
+    std::vector<std::optional<double>> stock;
+    std::vector<std::optional<double>> benchmark;
 };
 
 struct Trade {
@@ -128,6 +135,11 @@ bool has_candle_header(std::string_view csv);
 Analysis analyze(const std::vector<Candle>& candles);
 std::vector<std::optional<double>> sma_series(const std::vector<Candle>& candles, std::size_t period);
 std::vector<std::optional<double>> rsi_series(const std::vector<Candle>& candles, std::size_t period = 14);
+std::vector<std::optional<double>> atr_series(const std::vector<Candle>& candles, std::size_t period = 14);
+std::vector<std::optional<double>> volume_ratio_series(const std::vector<Candle>& candles, std::size_t period = 20);
+NormalizedComparison normalized_comparison_series(const std::vector<Candle>& stock,
+                                                   const std::vector<Candle>& benchmark,
+                                                   std::size_t start_index = 0);
 enum class WatchFilter { All, Oversold, Overbought, AboveSma200, NearTarget };
 bool matches_filter(const Analysis& analysis, std::optional<double> last, std::optional<double> target,
                     bool stale, WatchFilter filter);

@@ -59,6 +59,12 @@ struct Instrument {
     bool candles_stale{true};
 };
 
+struct MarketRefreshResult {
+    std::vector<Instrument> instruments;
+    std::vector<Candle> imoex_candles;
+    std::string imoex_error;
+};
+
 HWND g_window{};
 HWND g_list{};
 HWND g_ticker_edit{};
@@ -101,6 +107,9 @@ HWND g_position_take{};
 HWND g_position_levels_save{};
 HFONT g_font{};
 std::vector<Instrument> g_items;
+std::vector<Candle> g_imoex_candles;
+bool g_imoex_stale{true};
+std::string g_imoex_error;
 std::atomic<bool> g_busy{false};
 std::size_t g_selected{};
 std::vector<std::size_t> g_visible;
@@ -529,22 +538,27 @@ Instrument fetch_instrument(const Instrument& previous) {
     return item;
 }
 
+std::vector<Candle> fetch_index_candles();
+
 void refresh_data() {
     bool expected = false;
     if (!g_busy.compare_exchange_strong(expected, true)) return;
     EnableWindow(GetDlgItem(g_window, ID_REFRESH), FALSE);
-    SetWindowTextW(g_status, L"Загружаю данные MOEX ISS…");
+    SetWindowTextW(g_status, L"Загружаю акции и историю IMOEX из MOEX ISS…");
     const auto source = g_items;
     const HWND target = g_window;
     std::thread([source, target]() {
-        auto result = std::make_unique<std::vector<Instrument>>();
+        auto result = std::make_unique<MarketRefreshResult>();
+        PostMessageW(target, WM_FETCH_PROGRESS, 0, static_cast<LPARAM>(source.size()));
+        try { result->imoex_candles = fetch_index_candles(); }
+        catch (const std::exception& ex) { result->imoex_error = ex.what(); }
         for (const auto& item : source) {
-            PostMessageW(target, WM_FETCH_PROGRESS, static_cast<WPARAM>(result->size() + 1), static_cast<LPARAM>(source.size()));
-            try { result->push_back(fetch_instrument(item)); }
+            PostMessageW(target, WM_FETCH_PROGRESS, static_cast<WPARAM>(result->instruments.size() + 1), static_cast<LPARAM>(source.size()));
+            try { result->instruments.push_back(fetch_instrument(item)); }
             catch (const std::exception& ex) {
                 Instrument failed = item;
                 failed.error = ex.what();
-                result->push_back(std::move(failed));
+                result->instruments.push_back(std::move(failed));
             }
         }
         auto* raw = result.release();
@@ -614,6 +628,7 @@ void update_analysis() {
     text << "\r\nSMA20: " << optional_number(a.sma20) << "  SMA50: " << optional_number(a.sma50)
          << "  SMA200: " << optional_number(a.sma200) << "\r\n"
          << "RSI14 (Уайлдер): " << optional_number(a.rsi14) << "  Объём / средний20: " << optional_number(a.volume_ratio20) << "x\r\n"
+         << "ATR14: " << optional_number(a.atr14) << " ₽ (" << percent(a.atr_percent) << ")\r\n"
          << "От максимума истории: " << percent(a.drawdown_percent) << "\r\n"
          << "Тренд по дневному закрытию: " << (a.sma200 ? (item.candles.back().close > *a.sma200 ? "выше SMA200" : "ниже/равно SMA200") : "для SMA200 нужны 200 сессий") << "\r\n"
          << "Индикаторы: " << a.technical_note << "\r\n"
@@ -621,6 +636,7 @@ void update_analysis() {
          << "  |  график: " << (item.candles_stale ? "не обновлён" : "обновлён")
          << "  |  свечей: " << item.candles.size();
     if (!item.error.empty()) text << "\r\nСтатус источника: " << item.error;
+    if (!g_imoex_error.empty()) text << "\r\nИстория IMOEX: " << g_imoex_error;
     text << "\r\nТехнические индикаторы описывают прошлые цены и не являются сигналом к покупке.";
     SetWindowTextW(g_analysis, widen(text.str()).c_str());
     InvalidateRect(g_window, nullptr, TRUE);
@@ -1121,14 +1137,27 @@ void draw_chart(HDC dc, RECT area) {
         ? levels_for_position(active_position->ticker, active_position->opened_on) : nullptr;
     const auto sma20 = sma_series(candles, 20), sma50 = sma_series(candles, 50), sma200 = sma_series(candles, 200);
     const auto rsi = rsi_series(candles);
+    const auto atr = atr_series(candles);
+    const auto volume_ratios = volume_ratio_series(candles);
     const std::size_t count = candles.size();
     const std::size_t first = g_chart_sessions > 0 && count > static_cast<std::size_t>(g_chart_sessions)
         ? count - static_cast<std::size_t>(g_chart_sessions) : 0;
     const auto shown = count - first;
-    const LONG split = area.top + (area.bottom - area.top) * 65 / 100;
-    RECT plot{area.left + 62, area.top + 42, area.right - 16, split - 18};
-    RECT oscillator{plot.left, split + 24, plot.right, area.bottom - 26};
-    if (plot.right - plot.left < 30 || plot.bottom - plot.top < 40 || oscillator.bottom - oscillator.top < 40) return;
+    const auto comparison = normalized_comparison_series(candles, g_imoex_candles, first);
+    const LONG content_top = area.top + 56;
+    const LONG content_bottom = area.bottom - 23;
+    const LONG content_height = content_bottom - content_top;
+    const LONG price_height = content_height * 43 / 100;
+    const LONG comparison_height = content_height * 20 / 100;
+    const LONG volume_height = content_height * 17 / 100;
+    const LONG price_bottom = content_top + price_height;
+    const LONG comparison_bottom = price_bottom + comparison_height;
+    const LONG volume_bottom = comparison_bottom + volume_height;
+    RECT plot{area.left + 62, content_top + 16, area.right - 16, price_bottom};
+    RECT comparison_plot{plot.left, price_bottom + 16, plot.right, comparison_bottom};
+    RECT volume_plot{plot.left, comparison_bottom + 16, plot.right, volume_bottom};
+    RECT oscillator{plot.left, volume_bottom + 16, plot.right, content_bottom};
+    if (plot.right - plot.left < 30 || plot.bottom - plot.top < 25 || oscillator.bottom - oscillator.top < 10) return;
     SetBkMode(dc, TRANSPARENT);
     const auto text = [&](int x, int y, const std::string& value, COLORREF color) {
         SetTextColor(dc, color); const auto label = widen(value);
@@ -1138,6 +1167,13 @@ void draw_chart(HDC dc, RECT area) {
     text(area.left + 4, area.top + 19, "SMA20", RGB(232, 139, 43));
     text(area.left + 80, area.top + 19, "SMA50", RGB(34, 105, 181));
     text(area.left + 160, area.top + 19, "SMA200", RGB(135, 73, 170));
+    const auto current_atr = count == 0 ? std::optional<double>{} : atr.back();
+    const auto current_atr_percent = current_atr && candles.back().close > 0.0
+        ? std::optional<double>{*current_atr / candles.back().close * 100.0} : std::optional<double>{};
+    text(area.left + 4, area.top + 38,
+         "ATR(14): " + optional_number(current_atr) + " ₽ (" + percent(current_atr_percent) + ")" +
+         (g_imoex_stale ? " | IMOEX: история устарела" : " | IMOEX: обновлён"),
+         g_imoex_stale ? RGB(150, 90, 40) : RGB(65, 70, 90));
     if (active_position) {
         std::string position_legend = "Позиция: средняя " + money(active_position->average_entry_price);
         if (position_levels && position_levels->stop_loss) position_legend += " | стоп " + money(*position_levels->stop_loss);
@@ -1168,6 +1204,26 @@ void draw_chart(HDC dc, RECT area) {
     const auto px = [&](std::size_t i) { return static_cast<int>(plot.left + (static_cast<double>(i - first) + 0.5) * static_cast<double>(plot.right - plot.left) / static_cast<double>(shown)); };
     const auto py = [&](double value) { return static_cast<int>(plot.bottom - (value - minimum) / (maximum - minimum) * static_cast<double>(plot.bottom - plot.top)); };
     const auto ry = [&](double value) { return static_cast<int>(oscillator.bottom - value / 100.0 * static_cast<double>(oscillator.bottom - oscillator.top)); };
+    double comparison_minimum = 100.0, comparison_maximum = 100.0;
+    bool has_comparison = false;
+    double volume_maximum = 0.0;
+    for (std::size_t i = first; i < count; ++i) {
+        for (const auto* values : {&comparison.stock, &comparison.benchmark}) {
+            if ((*values)[i]) {
+                comparison_minimum = has_comparison ? std::min(comparison_minimum, *(*values)[i]) : *(*values)[i];
+                comparison_maximum = has_comparison ? std::max(comparison_maximum, *(*values)[i]) : *(*values)[i];
+                has_comparison = true;
+            }
+        }
+        volume_maximum = std::max(volume_maximum, candles[i].volume);
+    }
+    if (!has_comparison) { comparison_minimum = 90.0; comparison_maximum = 110.0; }
+    const double comparison_padding = std::max((comparison_maximum - comparison_minimum) * 0.12, 1.0);
+    comparison_minimum -= comparison_padding; comparison_maximum += comparison_padding;
+    const auto cy = [&](double value) {
+        return static_cast<int>(comparison_plot.bottom - (value - comparison_minimum) /
+            (comparison_maximum - comparison_minimum) * static_cast<double>(comparison_plot.bottom - comparison_plot.top));
+    };
     HPEN grid = CreatePen(PS_SOLID, 1, RGB(225, 231, 238));
     HGDIOBJ old_pen = SelectObject(dc, grid);
     for (int k = 0; k <= 4; ++k) {
@@ -1201,6 +1257,55 @@ void draw_chart(HDC dc, RECT area) {
     draw_line(sma20, RGB(232, 139, 43), false);
     draw_line(sma50, RGB(34, 105, 181), false);
     draw_line(sma200, RGB(135, 73, 170), false);
+    const auto latest_value = [&](const std::vector<std::optional<double>>& values) -> std::optional<double> {
+        for (std::size_t i = count; i > first; --i) if (values[i - 1]) return values[i - 1];
+        return std::nullopt;
+    };
+    const auto stock_performance = latest_value(comparison.stock);
+    const auto index_performance = latest_value(comparison.benchmark);
+    std::string comparison_title = "Сравнение с начала периода, база 100: акция ";
+    comparison_title += stock_performance ? percent(*stock_performance - 100.0) : "н/д";
+    comparison_title += " | IMOEX ";
+    comparison_title += index_performance ? percent(*index_performance - 100.0) : "нет общих дат";
+    text(area.left + 4, price_bottom + 1, comparison_title, RGB(65, 70, 90));
+    HPEN comparison_grid = CreatePen(PS_SOLID, 1, RGB(230, 233, 238));
+    old_pen = SelectObject(dc, comparison_grid);
+    for (double level : {comparison_minimum + comparison_padding, 100.0, comparison_maximum - comparison_padding}) {
+        const int y = cy(level); MoveToEx(dc, comparison_plot.left, y, nullptr); LineTo(dc, comparison_plot.right, y);
+    }
+    SelectObject(dc, old_pen); DeleteObject(comparison_grid);
+    const auto draw_comparison_line = [&](const std::vector<std::optional<double>>& values, COLORREF color) {
+        HPEN pen = CreatePen(PS_SOLID, 2, color); HGDIOBJ previous = SelectObject(dc, pen);
+        bool started = false;
+        for (std::size_t i = first; i < count; ++i) {
+            if (!values[i]) { started = false; continue; }
+            const int x = px(i), y = cy(*values[i]);
+            if (!started) { MoveToEx(dc, x, y, nullptr); started = true; } else LineTo(dc, x, y);
+        }
+        SelectObject(dc, previous); DeleteObject(pen);
+    };
+    draw_comparison_line(comparison.stock, RGB(34, 105, 181));
+    draw_comparison_line(comparison.benchmark, RGB(232, 139, 43));
+    std::string volume_title = "Объём: ";
+    volume_title += volume_ratios.back() ? optional_number(volume_ratios.back()) + "× среднего за 20 сессий" : "недостаточно истории для среднего20";
+    if (volume_ratios.back() && *volume_ratios.back() > 2.0) volume_title += " — всплеск >2×";
+    text(area.left + 4, comparison_bottom + 1, volume_title,
+         volume_ratios.back() && *volume_ratios.back() > 2.0 ? RGB(190, 95, 20) : RGB(65, 70, 90));
+    if (volume_maximum > 0.0) {
+        const int bar_half = std::clamp(static_cast<int>((volume_plot.right - volume_plot.left) /
+            static_cast<LONG>(shown) / 3), 1, 6);
+        for (std::size_t i = first; i < count; ++i) {
+            const int x = px(i);
+            const int y = static_cast<int>(volume_plot.bottom - candles[i].volume / volume_maximum *
+                static_cast<double>(volume_plot.bottom - volume_plot.top));
+            const bool spike = volume_ratios[i] && *volume_ratios[i] > 2.0;
+            const COLORREF color = spike ? RGB(235, 133, 35) :
+                (candles[i].close >= candles[i].open ? RGB(70, 164, 126) : RGB(205, 104, 112));
+            HBRUSH brush = CreateSolidBrush(color);
+            RECT bar{x - bar_half, y, x + bar_half + 1, volume_plot.bottom};
+            FillRect(dc, &bar, brush); DeleteObject(brush);
+        }
+    }
     const auto draw_position_level = [&](double value, const std::string& label, COLORREF color) {
         HPEN pen = CreatePen(PS_DASH, 1, color);
         HGDIOBJ previous = SelectObject(dc, pen);
@@ -1222,7 +1327,7 @@ void draw_chart(HDC dc, RECT area) {
     };
     fill_band(oscillator.top, ry(70.0), RGB(255, 235, 236));
     fill_band(ry(30.0), oscillator.bottom, RGB(230, 247, 239));
-    text(area.left + 4, split + 3, "RSI14 Уайлдера: " + optional_number(rsi.back()) + " | уровни 30 / 70", RGB(65, 70, 90));
+    text(area.left + 4, volume_bottom + 1, "RSI14 Уайлдера: " + optional_number(rsi.back()) + " | уровни 30 / 70", RGB(65, 70, 90));
     HPEN levels = CreatePen(PS_DASH, 1, RGB(155, 160, 170)); old_pen = SelectObject(dc, levels);
     for (double level : {0.0, 30.0, 50.0, 70.0, 100.0}) {
         const int y = ry(level); MoveToEx(dc, oscillator.left, y, nullptr); LineTo(dc, oscillator.right, y);
@@ -1631,16 +1736,26 @@ LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lp
         }
         return 0;
     case WM_FETCH_PROGRESS: {
-        const auto status = L"Загрузка котировок и истории: акция " + std::to_wstring(wparam) + L" из " + std::to_wstring(lparam);
+        const std::wstring status = wparam == 0
+            ? std::wstring(L"Загрузка дневной истории IMOEX…")
+            : std::wstring(L"Загрузка котировок и истории: акция ") + std::to_wstring(wparam) + L" из " + std::to_wstring(lparam);
         SetWindowTextW(g_status, status.c_str()); return 0;
     }
     case WM_TIMER:
         if (wparam == TIMER_AUTO_REFRESH && g_signal_settings.auto_refresh_enabled) { refresh_data(); return 0; }
         break;
     case WM_DATA_READY: {
-        std::unique_ptr<std::vector<Instrument>> data(reinterpret_cast<std::vector<Instrument>*>(lparam));
+        std::unique_ptr<MarketRefreshResult> data(reinterpret_cast<MarketRefreshResult*>(lparam));
         g_busy = false; EnableWindow(GetDlgItem(window, ID_REFRESH), TRUE);
-        for (auto& fetched : *data) {
+        if (!data->imoex_candles.empty()) {
+            g_imoex_candles = std::move(data->imoex_candles);
+            g_imoex_stale = false;
+            g_imoex_error.clear();
+        } else {
+            g_imoex_stale = true;
+            g_imoex_error = std::move(data->imoex_error);
+        }
+        for (auto& fetched : data->instruments) {
             const auto it = std::find_if(g_items.begin(), g_items.end(), [&](const auto& existing) { return existing.ticker == fetched.ticker; });
             if (it != g_items.end()) {
                 const auto current_target = it->target;
@@ -1649,7 +1764,9 @@ LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lp
             }
         }
         const auto loaded = std::count_if(g_items.begin(), g_items.end(), [](const auto& item) { return item.quote.last && !item.quote_stale; });
-        const auto status = L"Котировки загружены: " + std::to_wstring(loaded) + L" из " + std::to_wstring(g_items.size()) + L". Подробности — в выбранной акции.";
+        std::wstring status = L"Котировки загружены: " + std::to_wstring(loaded) + L" из " + std::to_wstring(g_items.size()) + L". ";
+        status += g_imoex_stale ? L"IMOEX не обновлён; сравнение использует старые данные. " : L"IMOEX обновлён. ";
+        status += L"Подробности — в выбранной акции.";
         SetWindowTextW(g_status, status.c_str());
         fill_list(); fill_signals(); fill_portfolio(); notify_new_signals(); return 0;
     }
@@ -1688,7 +1805,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
     wc.hCursor = LoadCursorW(nullptr, IDC_ARROW); wc.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_WINDOW + 1);
     wc.lpszClassName = L"MOEXWatchWindow"; wc.hIcon = LoadIconW(nullptr, IDI_APPLICATION);
     if (!RegisterClassExW(&wc)) return 1;
-    HWND window = CreateWindowExW(0, wc.lpszClassName, L"MOEX Watch 0.3.1 — аналитика и портфель", WS_OVERLAPPEDWINDOW,
+    HWND window = CreateWindowExW(0, wc.lpszClassName, L"MOEX Watch 0.4.0 — аналитика и портфель", WS_OVERLAPPEDWINDOW,
                                   CW_USEDEFAULT, CW_USEDEFAULT, 1340, 870, nullptr, nullptr, instance, nullptr);
     if (!window) return 2;
     ShowWindow(window, show); UpdateWindow(window);

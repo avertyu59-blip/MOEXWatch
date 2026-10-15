@@ -1,5 +1,6 @@
 #include "market_core.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <iostream>
 #include <stdexcept>
@@ -44,6 +45,38 @@ int main() {
     check(long_analysis.sma200 && std::abs(*long_analysis.sma200 - 150.5) < 1e-9, "SMA200 history");
     check(!sma_series(long_history,200)[198] && sma_series(long_history,200)[199], "SMA200 warmup");
     check(long_analysis.volume_ratio20 && *long_analysis.volume_ratio20 == 1.0, "volume baseline excludes current bar");
+    std::vector<Candle> atr_fixture{
+        {"2026-01-01",10,12,8,10,100},
+        {"2026-01-02",10,14,9,11,100},
+        {"2026-01-03",11,13,10,12,100}};
+    const auto atr = atr_series(atr_fixture, 2);
+    check(!atr[0] && atr[1] && std::abs(*atr[1] - 4.5) < 1e-9, "ATR initial true-range average");
+    check(atr[2] && std::abs(*atr[2] - 3.75) < 1e-9, "ATR Wilder smoothing");
+    check(!atr_series(atr_fixture, 0).back() && !atr_series(atr_fixture, 4).back(), "ATR guards invalid and short periods");
+    std::vector<Candle> volume_fixture(21, {"2026-01-01",100,100,100,100,100});
+    volume_fixture.back().volume = 300;
+    const auto volume_ratio = volume_ratio_series(volume_fixture);
+    check(volume_ratio.back() && std::abs(*volume_ratio.back() - 3.0) < 1e-9,
+          "volume ratio compares current bar to prior 20 sessions");
+    const std::vector<Candle> comparison_stock{
+        {"2026-01-01 00:00:00",100,100,100,100,1},
+        {"2026-01-02 00:00:00",105,105,105,105,1},
+        {"2026-01-03 00:00:00",120,120,120,120,1}};
+    const std::vector<Candle> comparison_index{
+        {"2026-01-01 00:00:00",3000,3000,3000,3000,1},
+        {"2026-01-02 00:00:00",3300,3300,3300,3300,1},
+        {"2026-01-03 00:00:00",3300,3300,3300,3300,1}};
+    const auto comparison = normalized_comparison_series(comparison_stock, comparison_index, 1);
+    check(!comparison.stock[0] && comparison.stock[1] && comparison.benchmark[1] &&
+          *comparison.stock[1] == 100.0 && *comparison.benchmark[1] == 100.0,
+          "normalized comparison rebases both series at visible range start");
+    check(comparison.stock[2] && comparison.benchmark[2] &&
+          std::abs(*comparison.stock[2] - 100.0 * 120.0 / 105.0) < 1e-9 &&
+          *comparison.benchmark[2] == 100.0,
+          "normalized comparison aligns daily candles by date");
+    const auto unmatched = normalized_comparison_series(comparison_stock, {}, 0);
+    check(std::none_of(unmatched.stock.begin(), unmatched.stock.end(), [](const auto& v) { return v.has_value(); }),
+          "normalized comparison handles missing benchmark history");
     check(matches_filter(long_analysis,250.0,250.0,false,WatchFilter::NearTarget), "target filter");
     check(!matches_filter(long_analysis,250.0,250.0,true,WatchFilter::NearTarget), "stale quote excluded from filter");
     check(matches_filter(long_analysis,250.0,{},false,WatchFilter::AboveSma200), "above SMA200 filter");
