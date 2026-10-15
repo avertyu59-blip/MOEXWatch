@@ -205,5 +205,11 @@ int main() {
     check(overbought_signal.matched && overbought_signal.reasons.size() == 1, "overbought RSI condition");
     const auto quoted = parse_csv("A;B\n1;\"value; with \"\"quote\"\"\"\n");
     check(quoted.size() == 2 && quoted[1][1] == "value; with \"quote\"", "quoted CSV fields parsed");
+    const auto dividends = parse_dividends_csv(
+        "registryclosedate;value;currencyid\n2025-06-30;33.3;SUR\n2024-06-20;10;RUB\n2025-07-01;0;RUB\n");
+    check(dividends.size() == 2 && dividends[0].record_date == "2024-06-20" &&
+          dividends[0].amount_per_share == 10.0 && dividends[0].currency == "RUB" &&
+          dividends[1].record_date == "2025-06-30", "dividend CSV parsed and sorted");
+    check(parse_dividends_csv("wrong;header\na;b\n").empty(), "invalid dividend CSV rejected");
     std::cout << "market_core_tests: all checks passed\n";
 }

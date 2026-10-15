@@ -30,6 +30,7 @@ namespace {
 constexpr UINT WM_DATA_READY = WM_APP + 10;
 constexpr UINT WM_FETCH_PROGRESS = WM_APP + 11;
 constexpr UINT WM_BACKTEST_READY = WM_APP + 12;
+constexpr UINT WM_DIVIDENDS_READY = WM_APP + 13;
 constexpr int ID_TICKER = 1001, ID_TARGET = 1002, ID_ADD = 1003, ID_TARGET_SET = 1004,
               ID_REMOVE = 1005, ID_REFRESH = 1006, ID_LIST = 1007, ID_FILTER = 1008, ID_RANGE = 1009;
 constexpr int ID_TABS = 1010, ID_TRADE_TICKER = 1011, ID_TRADE_QUANTITY = 1012,
@@ -47,6 +48,7 @@ constexpr int ID_TABS = 1010, ID_TRADE_TICKER = 1011, ID_TRADE_QUANTITY = 1012,
               ID_PORT_ADD = 1046, ID_PORT_DELETE = 1047, ID_PORT_POSITIONS = 1048,
               ID_PORT_TRANSACTIONS = 1049, ID_PORT_SUMMARY = 1050,
               ID_POSITION_STOP = 1051, ID_POSITION_TAKE = 1052, ID_POSITION_LEVELS_SAVE = 1053;
+constexpr int ID_DIVIDENDS_OPEN = 1054, ID_DIVIDENDS_LIST = 1055, ID_DIVIDENDS_REFRESH = 1056;
 constexpr UINT_PTR TIMER_AUTO_REFRESH = 1;
 
 struct Instrument {
@@ -57,6 +59,17 @@ struct Instrument {
     std::string error;
     bool quote_stale{true};
     bool candles_stale{true};
+    std::vector<DividendEvent> dividends;
+    std::string dividend_error;
+    std::string dividends_checked_at;
+    bool dividends_stale{true};
+};
+
+struct DividendFetchResult {
+    std::string ticker;
+    std::vector<DividendEvent> events;
+    std::string error;
+    std::string checked_at;
 };
 
 struct MarketRefreshResult {
@@ -72,6 +85,10 @@ HWND g_target_edit{};
 HWND g_status{};
 HWND g_analysis{};
 HWND g_tabs{};
+HWND g_dividend_window{};
+HWND g_dividend_list{};
+HWND g_dividend_info{};
+HWND g_dividend_refresh{};
 HWND g_trade_list{};
 HWND g_trade_summary{};
 HWND g_trade_ticker{};
@@ -112,6 +129,8 @@ bool g_imoex_stale{true};
 std::string g_imoex_error;
 std::atomic<bool> g_busy{false};
 std::size_t g_selected{};
+std::size_t g_dividend_instrument{};
+unsigned int g_dividend_request{};
 std::vector<std::size_t> g_visible;
 bool g_filling = false;
 bool g_building_trade_page = false;
@@ -497,6 +516,27 @@ std::string date_from() {
     out << static_cast<int>(ymd.year()) << '-' << std::setfill('0') << std::setw(2) << static_cast<unsigned>(ymd.month())
         << '-' << std::setw(2) << static_cast<unsigned>(ymd.day());
     return out.str();
+}
+
+std::string today_date();
+
+std::vector<DividendEvent> fetch_dividend_events(std::string_view ticker) {
+    const std::wstring path = L"/iss/securities/" + widen(ticker) +
+        L"/dividends.csv?iss.meta=off&iss.delimiter=%3B&iss.dp=point&lang=en";
+    const auto csv = https_get(path);
+    auto events = parse_dividends_csv(csv);
+    if (events.empty()) {
+        const auto rows = parse_csv(csv);
+        if (rows.empty() || std::none_of(rows.begin(), rows.end(), [](const auto& row) {
+                return std::any_of(row.begin(), row.end(), [](const auto& cell) {
+                    std::string upper_cell = cell;
+                    std::transform(upper_cell.begin(), upper_cell.end(), upper_cell.begin(),
+                        [](unsigned char ch) { return static_cast<char>(std::toupper(ch)); });
+                    return upper_cell == "REGISTRYCLOSEDATE";
+                });
+            })) throw std::runtime_error("MOEX ISS вернул неизвестный формат дивидендов");
+    }
+    return events;
 }
 
 Instrument fetch_instrument(const Instrument& previous) {
@@ -1114,6 +1154,10 @@ void remove_selected() {
         MessageBoxW(g_window, L"Тикер нельзя убрать из наблюдения, пока по нему есть открытая позиция.", L"Открытая позиция", MB_ICONINFORMATION);
         return;
     }
+    if (g_dividend_window) {
+        if (static_cast<std::size_t>(selected) == g_dividend_instrument) DestroyWindow(g_dividend_window);
+        else if (static_cast<std::size_t>(selected) < g_dividend_instrument) --g_dividend_instrument;
+    }
     g_items.erase(g_items.begin() + selected);
     SendMessageW(g_port_ticker, CB_DELETESTRING, static_cast<WPARAM>(selected), 0);
     if (!g_items.empty()) SendMessageW(g_port_ticker, CB_SETCURSEL, static_cast<WPARAM>(std::min(static_cast<std::size_t>(selected), g_items.size() - 1)), 0);
@@ -1123,14 +1167,14 @@ void remove_selected() {
     save_watchlist(); fill_list(); fill_signals(); g_signal_baseline_ready = false; InvalidateRect(g_window, nullptr, TRUE);
 }
 
-void draw_chart(HDC dc, RECT area) {
+void draw_chart(HDC dc, RECT area, std::size_t instrument_index) {
     FillRect(dc, &area, reinterpret_cast<HBRUSH>(COLOR_WINDOW + 1));
-    if (g_items.empty() || g_selected >= g_items.size() || g_items[g_selected].candles.empty()) {
+    if (g_items.empty() || instrument_index >= g_items.size() || g_items[instrument_index].candles.empty()) {
         SetBkMode(dc, TRANSPARENT);
         DrawTextW(dc, L"Нет данных для графика. Выберите акцию и нажмите «Обновить».", -1, &area, DT_CENTER | DT_VCENTER | DT_WORDBREAK);
         return;
     }
-    const auto& item = g_items[g_selected];
+    const auto& item = g_items[instrument_index];
     const auto& candles = item.candles;
     const auto active_position = open_position_for_ticker(item.ticker);
     const auto* position_levels = active_position
@@ -1244,6 +1288,23 @@ void draw_chart(HDC dc, RECT area) {
         Rectangle(dc, x - half, top, x + half + 1, bottom + 1);
         SelectObject(dc, old_brush); SelectObject(dc, old_pen); DeleteObject(brush); DeleteObject(pen);
     }
+    if (!item.dividends.empty()) {
+        HPEN event_pen = CreatePen(PS_DOT, 1, RGB(190, 91, 40));
+        old_pen = SelectObject(dc, event_pen);
+        for (const auto& event : item.dividends) {
+            const auto candle_it = std::lower_bound(candles.begin() + static_cast<std::ptrdiff_t>(first), candles.end(),
+                event.record_date, [](const Candle& candle, const std::string& date) {
+                    return candle.date.substr(0, 10) < date;
+                });
+            if (candle_it == candles.end() || candle_it->date.substr(0, 10) != event.record_date) continue;
+            const auto index = static_cast<std::size_t>(candle_it - candles.begin());
+            const int x = px(index);
+            MoveToEx(dc, x, plot.top, nullptr); LineTo(dc, x, oscillator.bottom);
+            Ellipse(dc, x - 4, plot.top - 7, x + 5, plot.top + 2);
+        }
+        SelectObject(dc, old_pen); DeleteObject(event_pen);
+        text(area.left + 250, area.top + 38, "Метки: даты фиксации реестра из MOEX ISS", RGB(160, 80, 30));
+    }
     const auto draw_line = [&](const std::vector<std::optional<double>>& values, COLORREF color, bool is_rsi) {
         HPEN pen = CreatePen(PS_SOLID, 2, color); HGDIOBJ previous = SelectObject(dc, pen);
         bool started = false;
@@ -1287,10 +1348,11 @@ void draw_chart(HDC dc, RECT area) {
     draw_comparison_line(comparison.stock, RGB(34, 105, 181));
     draw_comparison_line(comparison.benchmark, RGB(232, 139, 43));
     std::string volume_title = "Объём: ";
-    volume_title += volume_ratios.back() ? optional_number(volume_ratios.back()) + "× среднего за 20 сессий" : "недостаточно истории для среднего20";
-    if (volume_ratios.back() && *volume_ratios.back() > 2.0) volume_title += " — всплеск >2×";
+    const auto current_volume_ratio = volume_ratios.back();
+    volume_title += current_volume_ratio ? optional_number(current_volume_ratio) + "× среднего за 20 сессий" : "недостаточно истории для среднего20";
+    if (current_volume_ratio && *current_volume_ratio > 2.0) volume_title += " — всплеск >2×";
     text(area.left + 4, comparison_bottom + 1, volume_title,
-         volume_ratios.back() && *volume_ratios.back() > 2.0 ? RGB(190, 95, 20) : RGB(65, 70, 90));
+         current_volume_ratio && *current_volume_ratio > 2.0 ? RGB(190, 95, 20) : RGB(65, 70, 90));
     if (volume_maximum > 0.0) {
         const int bar_half = std::clamp(static_cast<int>((volume_plot.right - volume_plot.left) /
             static_cast<LONG>(shown) / 3), 1, 6);
@@ -1337,6 +1399,169 @@ void draw_chart(HDC dc, RECT area) {
     draw_line(rsi, RGB(105, 67, 176), true);
     text(plot.left, area.bottom - 19, candles[first].date.substr(0, 10), RGB(90, 99, 109));
     text(plot.right - 98, area.bottom - 19, candles.back().date.substr(0, 10), RGB(90, 99, 109));
+}
+
+void fill_dividend_list() {
+    if (!g_dividend_list || g_dividend_instrument >= g_items.size()) return;
+    ListView_DeleteAllItems(g_dividend_list);
+    const auto& item = g_items[g_dividend_instrument];
+    for (std::size_t index = 0; index < item.dividends.size(); ++index) {
+        const auto& event = item.dividends[index];
+        const Candle* previous = nullptr;
+        if (!item.candles.empty() && event.record_date <= item.candles.back().date.substr(0, 10)) {
+            for (const auto& candle : item.candles) {
+                if (candle.date.size() >= 10 && candle.date.substr(0, 10) < event.record_date) previous = &candle;
+            }
+        }
+        std::wstring last_buy = previous ? widen(previous->date.substr(0, 10)) : L"н/д";
+        std::wstring amount = widen(money(event.amount_per_share) + " " + event.currency);
+        std::wstring yield = L"н/д";
+        if (previous && previous->close > 0.0 && (event.currency == "RUB" || event.currency == "SUR"))
+            yield = widen(percent(event.amount_per_share / previous->close * 100.0));
+        const bool future = event.record_date >= today_date();
+        std::wstring status = future ? L"Событие в ISS; статус требует проверки" : L"Историческая запись MOEX ISS";
+        LVITEMW row{}; row.mask = LVIF_TEXT; row.iItem = static_cast<int>(index);
+        std::wstring date = widen(event.record_date);
+        row.pszText = date.data();
+        const int row_index = ListView_InsertItem(g_dividend_list, &row);
+        const auto set = [&](int column, std::wstring value) {
+            ListView_SetItemText(g_dividend_list, row_index, column, value.data());
+        };
+        set(1, std::move(last_buy)); set(2, std::move(amount)); set(3, std::move(yield)); set(4, std::move(status));
+    }
+    if (g_dividend_info) {
+        const std::wstring source = widen("Источник: https://iss.moex.com/iss/securities/" + item.ticker +
+            "/dividends.json | Проверено: " + (item.dividends_checked_at.empty() ? "не загружено" : item.dividends_checked_at) +
+            (item.dividends_stale ? " | данные устарели" : "") +
+            (item.dividends.empty() ? " | записей не получено" : "") +
+            " | ¹ Последняя сессия перед отсечкой; ² брутто сумма / её закрытие. ISS может не содержать все события.");
+        SetWindowTextW(g_dividend_info, source.c_str());
+    }
+}
+
+void refresh_dividend_events() {
+    if (!g_dividend_window || g_dividend_instrument >= g_items.size()) return;
+    const std::string ticker = g_items[g_dividend_instrument].ticker;
+    if (g_dividend_info) SetWindowTextW(g_dividend_info, L"Загружаю события из MOEX ISS…");
+    const HWND target = g_window;
+    const auto request = ++g_dividend_request;
+    EnableWindow(g_dividend_refresh, FALSE);
+    std::thread([target, ticker, request]() {
+        auto result = std::make_unique<DividendFetchResult>();
+        result->ticker = ticker;
+        result->checked_at = today_date();
+        try { result->events = fetch_dividend_events(ticker); }
+        catch (const std::exception& ex) { result->error = ex.what(); }
+        auto* raw = result.release();
+        if (!PostMessageW(target, WM_DIVIDENDS_READY, request, reinterpret_cast<LPARAM>(raw))) delete raw;
+    }).detach();
+}
+
+LRESULT CALLBACK dividends_window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lparam) {
+    switch (message) {
+    case WM_CREATE: {
+        g_dividend_window = window;
+        g_dividend_info = CreateWindowExW(0, L"STATIC", L"Загружаю события из MOEX ISS…", WS_CHILD | WS_VISIBLE | SS_LEFT,
+            12, 10, 1000, 68, window, nullptr, GetModuleHandleW(nullptr), nullptr);
+        g_dividend_refresh = CreateWindowExW(0, L"BUTTON", L"Обновить события", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
+            1015, 8, 160, 28, window, reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_DIVIDENDS_REFRESH)), GetModuleHandleW(nullptr), nullptr);
+        g_dividend_list = CreateWindowExW(WS_EX_CLIENTEDGE, WC_LISTVIEWW, L"", WS_CHILD | WS_VISIBLE | LVS_REPORT | LVS_SINGLESEL | LVS_SHOWSELALWAYS,
+            12, 86, 1140, 195, window, reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_DIVIDENDS_LIST)), GetModuleHandleW(nullptr), nullptr);
+        ListView_SetExtendedListViewStyle(g_dividend_list, LVS_EX_FULLROWSELECT | LVS_EX_GRIDLINES | LVS_EX_DOUBLEBUFFER);
+        const wchar_t* headers[] = {L"Дата отсечки", L"Последний день покупки¹", L"На акцию", L"Доходность²", L"Статус данных"};
+        const int widths[] = {115, 180, 125, 110, 360};
+        for (int i = 0; i < 5; ++i) {
+            LVCOLUMNW column{}; column.mask = LVCF_TEXT | LVCF_WIDTH;
+            column.pszText = const_cast<wchar_t*>(headers[i]); column.cx = widths[i];
+            ListView_InsertColumn(g_dividend_list, i, &column);
+        }
+        if (g_font) {
+            SendMessageW(g_dividend_info, WM_SETFONT, reinterpret_cast<WPARAM>(g_font), TRUE);
+            SendMessageW(g_dividend_list, WM_SETFONT, reinterpret_cast<WPARAM>(g_font), TRUE);
+            SendMessageW(g_dividend_refresh, WM_SETFONT, reinterpret_cast<WPARAM>(g_font), TRUE);
+        }
+        refresh_dividend_events();
+        return 0;
+    }
+    case WM_SIZE: {
+        const int width = LOWORD(lparam), height = HIWORD(lparam);
+        if (g_dividend_info) MoveWindow(g_dividend_info, 12, 10, width - 185, 68, TRUE);
+        if (g_dividend_refresh) MoveWindow(g_dividend_refresh, width - 172, 8, 160, 28, TRUE);
+        if (g_dividend_list) MoveWindow(g_dividend_list, 12, 86, width - 24, std::clamp(height / 4, 150, 195), TRUE);
+        return 0;
+    }
+    case WM_COMMAND:
+        if (LOWORD(wparam) == ID_DIVIDENDS_REFRESH) { refresh_dividend_events(); return 0; }
+        break;
+    case WM_DIVIDENDS_READY: {
+        std::unique_ptr<DividendFetchResult> result(reinterpret_cast<DividendFetchResult*>(lparam));
+        if (wparam != g_dividend_request) return 0;
+        EnableWindow(g_dividend_refresh, TRUE);
+        const auto it = std::find_if(g_items.begin(), g_items.end(), [&](const auto& item) { return item.ticker == result->ticker; });
+        const bool is_current = it != g_items.end() && g_dividend_instrument < g_items.size() &&
+            g_items[g_dividend_instrument].ticker == result->ticker;
+        if (it != g_items.end()) {
+            it->dividend_error = std::move(result->error);
+            if (it->dividend_error.empty()) {
+                it->dividends = std::move(result->events);
+                it->dividends_stale = false;
+                it->dividends_checked_at = std::move(result->checked_at);
+            } else it->dividends_stale = true;
+            if (is_current) {
+                g_dividend_instrument = static_cast<std::size_t>(it - g_items.begin());
+                fill_dividend_list();
+                InvalidateRect(window, nullptr, TRUE);
+            }
+        }
+        if (g_dividend_info && is_current && !it->dividend_error.empty()) {
+            const std::wstring error = widen("Ошибка загрузки: " + it->dividend_error + " | показаны сохранённые данные, если они есть.");
+            SetWindowTextW(g_dividend_info, error.c_str());
+        }
+        return 0;
+    }
+    case WM_PAINT: {
+        PAINTSTRUCT ps{}; HDC dc = BeginPaint(window, &ps);
+        RECT client{}; GetClientRect(window, &client);
+        RECT chart{client.left + 8, 295, client.right - 8, client.bottom - 8};
+        const auto old_font = g_font ? SelectObject(dc, g_font) : nullptr;
+        draw_chart(dc, chart, g_dividend_instrument);
+        if (g_font) SelectObject(dc, old_font);
+        EndPaint(window, &ps); return 0;
+    }
+    case WM_GETMINMAXINFO: {
+        auto* limits = reinterpret_cast<MINMAXINFO*>(lparam);
+        limits->ptMinTrackSize.x = 1000; limits->ptMinTrackSize.y = 760; return 0;
+    }
+    case WM_NCDESTROY:
+        ++g_dividend_request;
+        g_dividend_window = nullptr; g_dividend_list = nullptr; g_dividend_info = nullptr; g_dividend_refresh = nullptr;
+        break;
+    }
+    return DefWindowProcW(window, message, wparam, lparam);
+}
+
+void open_dividends_window() {
+    const int selected = selected_instrument();
+    if (selected < 0 || static_cast<std::size_t>(selected) >= g_items.size()) {
+        MessageBoxW(g_window, L"Сначала выберите акцию в списке.", L"Дивиденды", MB_ICONINFORMATION);
+        return;
+    }
+    g_dividend_instrument = static_cast<std::size_t>(selected);
+    if (g_dividend_window) {
+        SetWindowLongPtrW(g_dividend_window, GWLP_USERDATA, static_cast<LONG_PTR>(g_dividend_instrument));
+        SetWindowTextW(g_dividend_window, (L"Дивидендная аналитика — " + widen(g_items[g_dividend_instrument].ticker)).c_str());
+        fill_dividend_list(); InvalidateRect(g_dividend_window, nullptr, TRUE); ShowWindow(g_dividend_window, SW_RESTORE);
+        SetForegroundWindow(g_dividend_window); refresh_dividend_events(); return;
+    }
+    g_dividend_window = CreateWindowExW(0, L"MOEXWatchDividendWindow", L"Дивидендная аналитика",
+        WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, 1200, 840, g_window, nullptr,
+        GetModuleHandleW(nullptr), nullptr);
+    if (!g_dividend_window) {
+        MessageBoxW(g_window, L"Не удалось открыть окно дивидендной аналитики.", L"Ошибка", MB_ICONERROR);
+        return;
+    }
+    SetWindowTextW(g_dividend_window, (L"Дивидендная аналитика — " + widen(g_items[g_dividend_instrument].ticker)).c_str());
+    ShowWindow(g_dividend_window, SW_SHOW); UpdateWindow(g_dividend_window);
 }
 
 void add_control(HWND parent, const wchar_t* type, const wchar_t* caption, DWORD style, int x, int y, int w, int height, int id) {
@@ -1454,6 +1679,7 @@ void create_controls(HWND window) {
     add_control(window, L"BUTTON", L"Сохранить цель", BS_PUSHBUTTON, 535, 57, 125, 28, ID_TARGET_SET);
     add_control(window, L"BUTTON", L"Удалить акцию", BS_PUSHBUTTON, 670, 57, 115, 28, ID_REMOVE);
     add_control(window, L"BUTTON", L"Обновить", BS_PUSHBUTTON, 795, 57, 105, 28, ID_REFRESH);
+    add_control(window, L"BUTTON", L"Дивиденды", BS_PUSHBUTTON, 914, 57, 125, 28, ID_DIVIDENDS_OPEN);
     add_control(window, L"STATIC", L"Данные MOEX ISS могут отображаться с задержкой до 15 минут. Это приложение не отправляет сделки.", 0, 16, 94, 950, 22, 0);
     g_status = CreateWindowExW(0, L"STATIC", L"Готово", WS_CHILD | WS_VISIBLE, 16, 119, 940, 24, window, nullptr, GetModuleHandleW(nullptr), nullptr);
     if (g_font) SendMessageW(g_status, WM_SETFONT, reinterpret_cast<WPARAM>(g_font), TRUE);
@@ -1694,6 +1920,7 @@ LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lp
         case ID_TARGET_SET: set_target(); return 0;
         case ID_REMOVE: remove_selected(); return 0;
         case ID_REFRESH: refresh_data(); return 0;
+        case ID_DIVIDENDS_OPEN: open_dividends_window(); return 0;
         case ID_TRADE_ADD: add_trade(); return 0;
         case ID_TRADE_DELETE: delete_trade(); return 0;
         case ID_BACKTEST_RUN: start_backtest(); return 0;
@@ -1759,6 +1986,10 @@ LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lp
             const auto it = std::find_if(g_items.begin(), g_items.end(), [&](const auto& existing) { return existing.ticker == fetched.ticker; });
             if (it != g_items.end()) {
                 const auto current_target = it->target;
+                fetched.dividends = std::move(it->dividends);
+                fetched.dividend_error = std::move(it->dividend_error);
+                fetched.dividends_checked_at = std::move(it->dividends_checked_at);
+                fetched.dividends_stale = it->dividends_stale;
                 *it = std::move(fetched);
                 it->target = current_target;
             }
@@ -1770,6 +2001,10 @@ LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lp
         SetWindowTextW(g_status, status.c_str());
         fill_list(); fill_signals(); fill_portfolio(); notify_new_signals(); return 0;
     }
+    case WM_DIVIDENDS_READY:
+        if (!g_dividend_window || !PostMessageW(g_dividend_window, message, wparam, lparam))
+            delete reinterpret_cast<DividendFetchResult*>(lparam);
+        return 0;
     case WM_BACKTEST_READY: {
         std::unique_ptr<BacktestUiResult> result(reinterpret_cast<BacktestUiResult*>(lparam));
         g_backtest_busy = false;
@@ -1784,7 +2019,7 @@ LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lp
             RECT client{}; GetClientRect(window, &client);
             RECT chart{client.left + client.right * 46 / 100, 445, client.right - 16, client.bottom - 20};
             const auto old_font = SelectObject(dc, g_font);
-            draw_chart(dc, chart);
+            draw_chart(dc, chart, g_selected);
             SelectObject(dc, old_font);
         }
         EndPaint(window, &ps); return 0;
@@ -1805,7 +2040,13 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
     wc.hCursor = LoadCursorW(nullptr, IDC_ARROW); wc.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_WINDOW + 1);
     wc.lpszClassName = L"MOEXWatchWindow"; wc.hIcon = LoadIconW(nullptr, IDI_APPLICATION);
     if (!RegisterClassExW(&wc)) return 1;
-    HWND window = CreateWindowExW(0, wc.lpszClassName, L"MOEX Watch 0.4.0 — аналитика и портфель", WS_OVERLAPPEDWINDOW,
+    WNDCLASSEXW dividend_wc{}; dividend_wc.cbSize = sizeof(dividend_wc);
+    dividend_wc.lpfnWndProc = dividends_window_proc; dividend_wc.hInstance = instance;
+    dividend_wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+    dividend_wc.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_WINDOW + 1);
+    dividend_wc.lpszClassName = L"MOEXWatchDividendWindow";
+    if (!RegisterClassExW(&dividend_wc)) return 1;
+    HWND window = CreateWindowExW(0, wc.lpszClassName, L"MOEX Watch 0.5.0 — аналитика и портфель", WS_OVERLAPPEDWINDOW,
                                   CW_USEDEFAULT, CW_USEDEFAULT, 1340, 870, nullptr, nullptr, instance, nullptr);
     if (!window) return 2;
     ShowWindow(window, show); UpdateWindow(window);

@@ -142,6 +142,33 @@ std::vector<Candle> parse_candles_csv(std::string_view csv) {
     return candles;
 }
 
+std::vector<DividendEvent> parse_dividends_csv(std::string_view csv) {
+    const auto rows = parse_csv(csv);
+    std::vector<DividendEvent> events;
+    const auto header_it = std::find_if(rows.begin(), rows.end(), [](const auto& row) {
+        return column(row, "REGISTRYCLOSEDATE") && column(row, "VALUE");
+    });
+    if (header_it == rows.end()) return events;
+    const auto& header = *header_it;
+    const auto first_data = static_cast<std::size_t>(header_it - rows.begin()) + 1;
+    const auto record_date = column(header, "REGISTRYCLOSEDATE");
+    const auto amount = column(header, "VALUE");
+    const auto currency = column(header, "CURRENCYID");
+    for (std::size_t i = first_data; i < rows.size(); ++i) {
+        const auto date = field(rows[i], record_date);
+        const auto value = number(field(rows[i], amount).value_or(""));
+        if (!date || date->size() < 10 || !value || *value <= 0.0) continue;
+        const std::string normalized_date = date->substr(0, 10);
+        if (normalized_date[4] != '-' || normalized_date[7] != '-') continue;
+        const std::string currency_code = upper(trim(field(rows[i], currency).value_or("")));
+        events.push_back({normalized_date, *value, currency_code});
+    }
+    std::stable_sort(events.begin(), events.end(), [](const auto& left, const auto& right) {
+        return left.record_date < right.record_date;
+    });
+    return events;
+}
+
 std::vector<std::optional<double>> sma_series(const std::vector<Candle>& candles, std::size_t period) {
     std::vector<std::optional<double>> values(candles.size());
     if (period == 0) return values;

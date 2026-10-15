@@ -17,6 +17,12 @@ struct Candle {
     double volume{};
 };
 
+struct DividendEvent {
+    std::string record_date;
+    double amount_per_share{};
+    std::string currency;
+};
+
 struct Quote {
     std::string ticker;
     std::optional<double> last;
@@ -131,6 +137,7 @@ struct BacktestSummary {
 std::vector<std::vector<std::string>> parse_csv(std::string_view csv, char delimiter = ';');
 std::optional<Quote> parse_quote_csv(std::string_view csv, std::string_view ticker);
 std::vector<Candle> parse_candles_csv(std::string_view csv);
+std::vector<DividendEvent> parse_dividends_csv(std::string_view csv);
 bool has_candle_header(std::string_view csv);
 Analysis analyze(const std::vector<Candle>& candles);
 std::vector<std::optional<double>> sma_series(const std::vector<Candle>& candles, std::size_t period);
