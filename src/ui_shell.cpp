@@ -4,6 +4,7 @@ namespace moexwatch::ui {
 
 void Application::storage_failure(const char* error) {
     state.persistence.writes_blocked = true;
+    try{if(!log)(void)fetch_context(0);if(log)log->record(0,"storage","writes_blocked");}catch(...){ }
     MessageBoxW(shell.window, widen(std::string("Ошибка хранения данных: ") + error +
         "\nСделайте резервную копию. До исправления ошибки автоматическая запись отключена.").c_str(), L"MOEXWatch", MB_ICONERROR);
 }
@@ -196,10 +197,11 @@ LRESULT CALLBACK Application::handle_window_message(HWND window, UINT message, W
         }
         return 0;
     }
-    case WM_DIVIDENDS_READY:
-        if (!dividends_page.window || !PostMessageW(dividends_page.window, message, wparam, lparam))
-            delete reinterpret_cast<DividendFetchResult*>(lparam);
+    case WM_DIVIDENDS_READY: {
+        std::unique_ptr<DividendFetchResult> result(reinterpret_cast<DividendFetchResult*>(lparam));
+        if(result)apply_dividend_response(static_cast<std::uint64_t>(wparam),std::move(*result));
         return 0;
+    }
     case WM_BACKTEST_READY: {
         complete_backtest(lparam);
         return 0;

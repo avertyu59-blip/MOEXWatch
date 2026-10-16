@@ -88,7 +88,7 @@ HttpResponse winhttp_get(const HttpRequest& input,std::stop_token stop) {
     if(!WinHttpQueryHeaders(request.handle,WINHTTP_QUERY_STATUS_CODE|WINHTTP_QUERY_FLAG_NUMBER,WINHTTP_HEADER_NAME_BY_INDEX,&status,&size,WINHTTP_NO_HEADER_INDEX))fail(GetLastError());
     result.status=status;
     for(;;){
-        check_cancelled(stop);request.prepare();issued(WinHttpQueryDataAvailable(request.handle,nullptr));request.wait(WINHTTP_CALLBACK_STATUS_DATA_AVAILABLE,stop,deadline);
+        check_cancelled(stop);if(std::chrono::steady_clock::now()>=deadline)fail(ERROR_WINHTTP_TIMEOUT);request.prepare();issued(WinHttpQueryDataAvailable(request.handle,nullptr));request.wait(WINHTTP_CALLBACK_STATUS_DATA_AVAILABLE,stop,deadline);
         const auto count=request.state->bytes;if(!count)break;
         const auto read=static_cast<DWORD>(std::min<std::size_t>(count,request.state->buffer.size()));
         request.prepare();issued(WinHttpReadData(request.handle,request.state->buffer.data(),read,nullptr));request.wait(WINHTTP_CALLBACK_STATUS_READ_COMPLETE,stop,deadline);

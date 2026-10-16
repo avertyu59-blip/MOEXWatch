@@ -18,6 +18,19 @@ std::string envelope(std::string_view kind,std::string_view payload){
     std::ostringstream out;out<<"MOEXWATCH_"<<kind<<";1;"<<payload.size()<<';'<<std::hex<<std::setfill('0')<<std::setw(8)<<checksum(payload)<<'\n'<<payload;
     auto result=out.str();if(result.size()>limit)throw std::runtime_error("Пользовательский файл превышает 4 МБ");return result;
 }
+std::vector<std::vector<std::string>> strict_csv(std::string_view payload){
+    enum class Cell {Start,Plain,Quoted,Closed};Cell state=Cell::Start;
+    for(std::size_t i=0;i<payload.size();++i){
+        const char c=payload[i];
+        if(state==Cell::Quoted){if(c=='"')state=Cell::Closed;continue;}
+        if(state==Cell::Closed&&c=='"'){state=Cell::Quoted;continue;}
+        if(c==';'||c=='\n'||c=='\r'){state=Cell::Start;continue;}
+        if(state==Cell::Closed||(c=='"'&&state!=Cell::Start))throw std::runtime_error("Повреждены кавычки CSV");
+        state=c=='"'?Cell::Quoted:Cell::Plain;
+    }
+    if(state==Cell::Quoted)throw std::runtime_error("Незакрытые кавычки CSV");
+    return parse_csv(payload);
+}
 struct Document {std::string payload;bool legacy{};};
 Document decode(std::string_view bytes,std::string_view kind){
     if(!bytes.starts_with("MOEXWATCH_"))return {std::string(bytes),true};
@@ -92,7 +105,8 @@ void load_signal_settings(const std::filesystem::path& root,SignalSettings& valu
 void save_trades(const std::filesystem::path& root,const std::vector<Trade>& value){std::lock_guard lock(user_mutex);write_document(root/"trades.csv","TRADES",trade_payload(value));}
 void load_trades(const std::filesystem::path& root,std::vector<Trade>& value,bool allow_migration){
     std::lock_guard lock(user_mutex);const auto path=root/"trades.csv";const auto bytes=read_text(path);if(!bytes)return;
-    const auto doc=decode(*bytes,"TRADES");const auto rows=parse_csv(doc.payload);
+    const auto doc=decode(*bytes,"TRADES");
+    const auto rows=strict_csv(doc.payload);
     if(rows.empty()||rows[0]!=std::vector<std::string>{"ticker","quantity","buy_price","sell_price","commission","tax_rate_percent"})throw std::runtime_error("Неизвестный формат сделок");
     std::vector<Trade> loaded;
     for(std::size_t i=1;i<rows.size();++i){const auto& row=rows[i];if(row.size()!=6)throw std::runtime_error("Неполная строка сделки");const auto q=number(row[1]),b=number(row[2]),s=number(row[3]),c=number(row[4]),t=number(row[5]);if(!q||!b||!s||!c||!t)throw std::runtime_error("Некорректное число сделки");Trade trade{row[0],*q,*b,*s,*c,*t};if(!valid_trade(trade))throw std::runtime_error("Недопустимая сделка");loaded.push_back(trade);}
@@ -103,7 +117,8 @@ void save_watchlist(const std::filesystem::path& root,const std::vector<Instrume
 void load_watchlist(const std::filesystem::path& root,std::vector<Instrument>& value,bool allow_migration){
     std::lock_guard lock(user_mutex);const auto path=root/"watchlist.csv";const auto bytes=read_text(path);
     if(!bytes){if(value.empty())for(const char* ticker:{"GAZP","LKOH","SBER","ROSN","OZON","T","YDEX","NVTK","SMLT","VTBR"}){Instrument item;item.ticker=ticker;item.quote.ticker=ticker;value.push_back(item);}return;}
-    const auto doc=decode(*bytes,"WATCHLIST");const auto rows=parse_csv(doc.payload);
+    const auto doc=decode(*bytes,"WATCHLIST");
+    const auto rows=strict_csv(doc.payload);
     if(rows.empty()||rows[0]!=std::vector<std::string>{"# ticker","target"})throw std::runtime_error("Неизвестный формат списка наблюдения");
     if(rows.size()>31)throw std::runtime_error("Список наблюдения превышает 30 бумаг");
     std::vector<Instrument> loaded;std::set<std::string> ids;

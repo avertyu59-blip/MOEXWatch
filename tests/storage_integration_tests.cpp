@@ -42,6 +42,15 @@ int main(){try{
     const auto settings_bytes=*st::read_text(root/"signals.ini");SignalSettings settings_restart;st::load_signal_settings(root,settings_restart);check(settings_restart.rsi_oversold_below==25,"settings survive restart");
     for(const auto* bad:{"rsi_oversold_enabled=2\n","rsi_oversold_below=nan\n","require_all=1\nrequire_all=0\n","unknown=1\n","auto_refresh_minutes=1\n"}){st::atomic_write(root/"signals.ini",bad);rejects([&]{st::load_signal_settings(root,settings_restart);});check(settings_restart.rsi_oversold_below==25&&st::read_text(root/"signals.ini")==bad,"invalid settings are reported without resetting or overwriting");}
     st::atomic_write(root/"signals.ini",settings_bytes);
+    for(const auto& name:{"signals.ini","trades.csv"}){
+        const auto bytes=*st::read_text(root/name);auto future=bytes;future.replace(future.find(";1;"),3,";99;");st::atomic_write(root/name,future);
+        if(std::string_view(name)=="signals.ini"){rejects([&]{st::load_signal_settings(root,settings_restart);});rejects([&]{st::save_signal_settings(root,settings);});}
+        else {rejects([&]{st::load_trades(root,trades_restart);});rejects([&]{st::save_trades(root,trades);});}
+        check(st::read_text(root/name)==future,"future versions cannot be overwritten");st::atomic_write(root/name,bytes);
+    }
+    st::atomic_write(root/"trades.csv","ticker;quantity;buy_price;sell_price;commission;tax_rate_percent\nSBER;10;100;120;2;13\nGAZP;1;\"100;120;2;13\n");
+    rejects([&]{st::load_trades(root,trades_restart);});check(trades_restart.size()==1,"unterminated CSV cannot commit a partial journal");st::atomic_write(root/"trades.csv",trades_bytes);
+
     Temp blocked;st::atomic_write(blocked.root/"watchlist.csv",old_watch);st::atomic_write(blocked.root/"backups","blocked");std::vector<Instrument> untouched;
     rejects([&]{st::load_watchlist(blocked.root,untouched);});check(untouched.empty()&&st::read_text(blocked.root/"watchlist.csv")==old_watch,"backup failure prevents migration and application");
     // Complete import -> journal save -> fresh load, including position levels and calculations.

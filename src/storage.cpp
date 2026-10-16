@@ -172,7 +172,7 @@ std::filesystem::path create_backup(const std::filesystem::path& root,std::stop_
         }
         if(files.empty())throw std::runtime_error("Нет сохранённых пользовательских файлов для копирования");
         std::ostringstream manifest;
-        manifest<<"MOEXWatch backup 0.6.7\nЗакройте приложение перед восстановлением. Скопируйте файлы из этой папки в APPDATA/MOEXWatch.\nДля полной копии заменяйте набор файлов целиком. Если восстанавливаете старую копию без portfolio_journal_v2.csv, сначала перенесите текущий portfolio_journal_v2.csv в отдельную безопасную папку: иначе приложение продолжит читать его вместо старых файлов.\nКэш котировок не требуется для восстановления.\n\nfile;bytes\n";
+        manifest<<"MOEXWatch backup 0.6.8\nЗакройте приложение перед восстановлением. Скопируйте файлы из этой папки в APPDATA/MOEXWatch.\nДля полной копии заменяйте набор файлов целиком. Если восстанавливаете старую копию без portfolio_journal_v2.csv, сначала перенесите текущий portfolio_journal_v2.csv в отдельную безопасную папку: иначе приложение продолжит читать его вместо старых файлов.\nФайлы watchlist.csv, trades.csv и signals.ini начиная с 0.6.8 содержат версию и CRC32. Для отката используйте полный снимок до миграции.\nКэш котировок не требуется для восстановления.\n\nfile;bytes\n";
         for(const auto& file:files) {
             check_cancelled(stop);
             if(std::filesystem::is_symlink(file))throw std::runtime_error("Символические ссылки в резервную копию не включаются");
