@@ -61,7 +61,8 @@ int main(){try{
     check(migration.levels.empty()&&migration.unresolved_levels.size()==1,"ambiguous old date is preserved unresolved");
     const auto single=migrate_portfolio_identity({legacy.front()},old_levels);
     check(single.levels.size()==1&&single.levels[0].position_id==single.transactions[0].position_id,"unambiguous old level gets correct position ID");
-    Temp tmp;st::save_portfolio(tmp.root,legacy);st::save_position_levels(tmp.root,old_levels);
+    Temp tmp;check(fails([&]{st::save_portfolio(tmp.root,identified);}),"legacy writer cannot silently strip operation IDs");
+    st::save_portfolio(tmp.root,legacy);st::save_position_levels(tmp.root,old_levels);
     const auto old_bytes=st::read_text(tmp.root/"portfolio_transactions.csv");
     check(fails([&]{st::load_portfolio_journal(tmp.root,false);})&&!std::filesystem::exists(tmp.root/"portfolio_journal_v2.csv"),"blocked storage prevents migration writes");
     auto loaded=st::load_portfolio_journal(tmp.root);

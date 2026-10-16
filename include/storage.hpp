@@ -17,6 +17,7 @@ void save_signal_settings(const std::filesystem::path& root, const SignalSetting
 void load_signal_settings(const std::filesystem::path& root, SignalSettings& value);
 void save_trades(const std::filesystem::path& root, const std::vector<Trade>& value);
 void load_trades(const std::filesystem::path& root, std::vector<Trade>& value);
+// Legacy v1 I/O for migration; rejects writing persistent identities.
 void save_portfolio(const std::filesystem::path& root, const std::vector<PortfolioTransaction>& value);
 void load_portfolio(const std::filesystem::path& root, std::vector<PortfolioTransaction>& value);
 void save_position_levels(const std::filesystem::path& root, const std::vector<PositionLevels>& value);

@@ -111,6 +111,7 @@ void load_trades(const std::filesystem::path& root, std::vector<Trade>& value) {
 }
 
 void save_portfolio(const std::filesystem::path& root, const std::vector<PortfolioTransaction>& value) {
+    if(std::any_of(value.begin(),value.end(),[](const auto& t){return !t.id.empty()||!t.position_id.empty()||t.sequence;}))throw std::runtime_error("Журнал с ID сохраняется только через save_portfolio_journal");
     std::ostringstream out;
     out << "date;ticker;side;quantity;price;commission\n" << std::setprecision(17);
     for (const auto& transaction : value)
@@ -145,6 +146,7 @@ void load_portfolio(const std::filesystem::path& root, std::vector<PortfolioTran
 }
 
 void save_position_levels(const std::filesystem::path& root, const std::vector<PositionLevels>& value) {
+    if(std::any_of(value.begin(),value.end(),[](const auto& l){return !l.position_id.empty();}))throw std::runtime_error("Уровни с ID сохраняются только в едином журнале");
     std::ostringstream out;
     out << "ticker;opened_on;stop_loss;take_profit\n" << std::setprecision(15);
     for (const auto& levels : value) {
@@ -288,7 +290,7 @@ std::filesystem::path create_backup(const std::filesystem::path& root) {
         }
         if(files.empty())throw std::runtime_error("Нет сохранённых пользовательских файлов для копирования");
         std::ostringstream manifest;
-        manifest<<"MOEXWatch backup 0.6.5\nЗакройте приложение перед восстановлением. Скопируйте файлы из этой папки в APPDATA/MOEXWatch.\nДля полной копии заменяйте набор файлов целиком. Если восстанавливаете старую копию без portfolio_journal_v2.csv, сначала перенесите текущий portfolio_journal_v2.csv в отдельную безопасную папку: иначе приложение продолжит читать его вместо старых файлов.\nКэш котировок не требуется для восстановления.\n\nfile;bytes\n";
+        manifest<<"MOEXWatch backup 0.6.6\nЗакройте приложение перед восстановлением. Скопируйте файлы из этой папки в APPDATA/MOEXWatch.\nДля полной копии заменяйте набор файлов целиком. Если восстанавливаете старую копию без portfolio_journal_v2.csv, сначала перенесите текущий portfolio_journal_v2.csv в отдельную безопасную папку: иначе приложение продолжит читать его вместо старых файлов.\nКэш котировок не требуется для восстановления.\n\nfile;bytes\n";
         for(const auto& file:files) {
             if(std::filesystem::is_symlink(file))throw std::runtime_error("Символические ссылки в резервную копию не включаются");
             const auto bytes=read_text(file);
