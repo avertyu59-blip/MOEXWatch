@@ -17,3 +17,14 @@ jobs:
         run: cmake --build build --config Release
       - name: Test
         run: ctest --test-dir build -C Release --output-on-failure
+
+  portable-calculations:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure calculations without UI or adapters
+        run: cmake -S . -B domain-build -DMOEX_DOMAIN_ONLY=ON -DCMAKE_BUILD_TYPE=Release
+      - name: Build calculations
+        run: cmake --build domain-build --parallel 2
+      - name: Test calculations
+        run: ctest --test-dir domain-build --output-on-failure

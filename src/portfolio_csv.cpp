@@ -92,9 +92,4 @@ std::string export_portfolio_csv(const std::vector<PortfolioTransaction>& transa
  for(const auto&t:transactions){if(!valid_portfolio_transaction(t))throw std::runtime_error("Журнал содержит некорректную операцию");out<<t.date<<';'<<t.ticker<<';'<<(t.side==PortfolioSide::Buy?"BUY":"SELL")<<';'<<t.quantity<<';'<<t.price<<';'<<t.commission<<"\r\n";}
  return out.str();
 }
-std::optional<double> portfolio_weight(const PortfolioSummary& summary,const PortfolioPosition& position,bool fresh){
- if(!fresh||summary.open_positions==0||summary.priced_positions!=summary.open_positions||summary.total_market_value<=0||!std::isfinite(summary.total_market_value)||!position.market_value||position.quantity<=0)return {};
- const double value=*position.market_value/summary.total_market_value*100.0;
- return std::isfinite(value)?std::optional<double>(value):std::nullopt;
-}
 }

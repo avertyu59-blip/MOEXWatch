@@ -5,19 +5,14 @@ void Application::fill_dividend_list() {
     if (!charts_page.dividend_list || charts_page.dividend_instrument >= app_items.size()) return;
     ListView_DeleteAllItems(charts_page.dividend_list);
     const auto& item = app_items[charts_page.dividend_instrument];
+    const auto as_of = today_date();
+    const auto calendar = moex_calendar_2026();
     for (std::size_t index = 0; index < item.dividends.size(); ++index) {
         const auto& event = item.dividends[index];
-        const bool historical = !event.record_date.empty() && event.record_date < today_date();
-        std::wstring yield = L"н/д";
-        if (event.status != DividendStatus::Cancelled && event.verification != DividendVerification::Conflict) {
-            if (!historical && item.quote.last && *item.quote.last > 0.0 && !item.quote_stale)
-                yield = widen(percent(event.amount_per_share / *item.quote.last * 100.0) + " (к текущей)");
-            else if (!event.last_buy_date.empty()) {
-                const auto candle = std::find_if(item.candles.begin(), item.candles.end(), [&](const auto& c) { return c.date.substr(0,10) == event.last_buy_date; });
-                if (candle != item.candles.end() && candle->close > 0.0 && !item.candles_stale)
-                    yield = widen(percent(event.amount_per_share / candle->close * 100.0) + " (к закрытию)");
-            }
-        }
+        const auto calculated_yield = calculate_dividend_yield(event, today_date(), item.quote.last,
+            item.quote_stale, item.candles, item.candles_stale);
+        const std::wstring yield = calculated_yield.percent ? widen(percent(calculated_yield.percent) +
+            (calculated_yield.basis == DividendYieldBasis::CurrentPrice ? " (к текущей)" : " (к закрытию)")) : L"н/д";
         LVITEMW row{}; row.mask = LVIF_TEXT|LVIF_PARAM; row.lParam=static_cast<LPARAM>(index); row.iItem = static_cast<int>(index);
         std::wstring date = event.record_date.empty() ? L"н/д (прогноз)" : widen(event.record_date);
         row.pszText = date.data();
@@ -32,6 +27,13 @@ void Application::fill_dividend_list() {
         set(5, widen(verification + (event.issuer_checked_at.empty() ? "" : " | " + event.issuer_checked_at)));
         set(6, widen(event.reported_last_buy.empty() ? "н/д" : event.reported_last_buy));
         set(7, widen(event.source_url)); set(8, widen(event.issuer_url)); set(9, widen(event.last_buy_basis));
+        const auto entitlement = calculate_dividend_entitlement(item.ticker, event,
+            portfolio_page.transactions, calendar, as_of);
+        std::string expected = "н/д: " + entitlement.reason;
+        if (item.dividends_stale) expected = "н/д: актуальность события не подтверждена";
+        else if (entitlement.gross_amount) expected = money(*entitlement.quantity) + " акц.; " +
+            money(*entitlement.gross_amount) + " RUB; " + entitlement.reason;
+        set(10, widen(expected));
     }
     if (charts_page.dividend_info) {
         std::string info = "Обновлено: " + (item.dividends_checked_at.empty() ? "ещё не загружено" : item.dividends_checked_at) +
@@ -100,9 +102,9 @@ LRESULT CALLBACK Application::handle_dividends_message(HWND window, UINT message
         charts_page.dividend_list = CreateWindowExW(WS_EX_CLIENTEDGE, WC_LISTVIEWW, L"", WS_CHILD | WS_VISIBLE | LVS_REPORT | LVS_SINGLESEL | LVS_SHOWSELALWAYS,
             12, 110, 1140, 165, window, reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_DIVIDENDS_LIST)), GetModuleHandleW(nullptr), nullptr);
         ListView_SetExtendedListViewStyle(charts_page.dividend_list, LVS_EX_FULLROWSELECT | LVS_EX_GRIDLINES | LVS_EX_DOUBLEBUFFER);
-        const wchar_t* headers[] = {L"Дата отсечки", L"Последний день покупки¹", L"На акцию", L"Доходность²", L"Статус", L"Сверка с эмитентом", L"Купить до (источник)", L"Источник", L"Эмитент", L"Основание расчёта¹"};
-        const int widths[] = {115, 180, 125, 160, 230, 280, 170, 340, 340, 460};
-        for (int i = 0; i < 10; ++i) {
+        const wchar_t* headers[] = {L"Дата отсечки", L"Последний день покупки¹", L"На акцию", L"Доходность²", L"Статус", L"Сверка с эмитентом", L"Купить до (источник)", L"Источник", L"Эмитент", L"Основание расчёта¹", L"Ожидается по журналу²"};
+        const int widths[] = {115, 180, 125, 160, 230, 280, 170, 340, 340, 460, 540};
+        for (int i = 0; i < 11; ++i) {
             LVCOLUMNW column{}; column.mask = LVCF_TEXT | LVCF_WIDTH;
             column.pszText = const_cast<wchar_t*>(headers[i]); column.cx = widths[i];
             ListView_InsertColumn(charts_page.dividend_list, i, &column);

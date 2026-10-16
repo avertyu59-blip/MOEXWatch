@@ -15,15 +15,11 @@ void Application::load_trades() {
 void Application::fill_trades() {
     if (!trades_page.list) return;
     ListView_DeleteAllItems(trades_page.list);
-    TradeResult totals{};
+    const auto totals = calculate_trade_totals(trades_page.records);
     for (std::size_t i = 0; i < trades_page.records.size(); ++i) {
         const auto& trade = trades_page.records[i];
         const auto result = calculate_trade(trade);
         if (!result) continue;
-        totals.gross_profit += result->gross_profit;
-        totals.profit_after_commission += result->profit_after_commission;
-        totals.tax += result->tax;
-        totals.net_profit += result->net_profit;
         LVITEMW row{}; row.mask = LVIF_TEXT|LVIF_PARAM; row.lParam=static_cast<LPARAM>(i); row.iItem = static_cast<int>(i);
         auto ticker = widen(trade.ticker); row.pszText = ticker.data();
         ListView_InsertItem(trades_page.list, &row);
@@ -34,11 +30,12 @@ void Application::fill_trades() {
             auto wide = widen(values[col - 1]); ListView_SetItemText(trades_page.list, static_cast<int>(i), col, wide.data());
         }
     }
+    if (!totals) { SetWindowTextW(trades_page.summary, L"Расчёт невозможен: проверьте операции и диапазон чисел."); return; }
     const auto summary = L"Сделок: " + std::to_wstring(trades_page.records.size()) +
-        L"     Валовая прибыль: " + widen(money(totals.gross_profit)) + L" ₽" +
-        L"     После комиссий: " + widen(money(totals.profit_after_commission)) + L" ₽" +
-        L"     Налог (оценка): " + widen(money(totals.tax)) + L" ₽" +
-        L"     Чистая прибыль: " + widen(money(totals.net_profit)) + L" ₽";
+        L"     Валовая прибыль: " + widen(money(totals->gross_profit)) + L" ₽" +
+        L"     После комиссий: " + widen(money(totals->profit_after_commission)) + L" ₽" +
+        L"     Налог (оценка): " + widen(money(totals->tax)) + L" ₽" +
+        L"     Чистая прибыль: " + widen(money(totals->net_profit)) + L" ₽";
     SetWindowTextW(trades_page.summary, summary.c_str());
     apply_table_sort(trades_page.list,ID_TRADE_LIST);
 }

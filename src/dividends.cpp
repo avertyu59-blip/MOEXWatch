@@ -213,36 +213,6 @@ void merge_dividends(std::vector<DividendEvent>& events,const std::vector<Divide
     std::stable_sort(events.begin(),events.end(),[](const auto& a,const auto& b){return a.record_date<b.record_date;});
 }
 
-std::optional<std::string> dividend_last_buy(std::string_view record,const std::vector<TradingDay>& days) {
-    const auto rd=day(record);if(!rd)return {};
-    std::map<std::string,TradingDay> calendar;
-    for(const auto& d:days) {if(!day(d.date))return {};if(!calendar.emplace(d.date,d).second)return {};}
-    // No weekday guesses: require explicit coverage up to the record date.
-    if (!calendar.contains(std::string(record))) return {};
-    auto start = *rd;
-    for (int i=0;i<21;++i) {
-        const auto previous=start-std::chrono::days{1};
-        if (!calendar.contains(iso(previous))) break;
-        start=previous;
-    }
-
-    const int lag=record<"2023-07-31" ? 2:1;
-    std::vector<std::string> business;
-    for(const auto& [key,d]:calendar)if(d.traded && (d.session_date.empty()||d.session_date==key))business.push_back(key);
-    std::optional<std::string> last;
-    for(const auto& [key,d]:calendar) {
-        if(!d.traded || key>record || key<iso(start))continue;
-        const auto effective=d.session_date.empty()?key:d.session_date;
-        const auto it=std::lower_bound(business.begin(),business.end(),effective);
-        if(it==business.end() || *it!=effective)continue;
-        // Weekend sessions carry the same business date, not an extra settlement day.
-        const auto offset=std::distance(it,business.end());
-        if(offset<=lag)continue;
-        if(*(it+lag)<=record)last=key;
-    }
-    return last;
-}
-
 std::vector<TradingDay> moex_calendar_2026() {
     // Official annual schedule: https://www.moex.com/n96571 and /n95564.
     // Reviewed 2026-10-15. This deliberately has no rules for another year.
