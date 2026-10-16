@@ -33,10 +33,17 @@ int main() {
     near(*analyze(flat).rsi14,50);near(*analyze(flat).atr14,4);near(*analyze(flat).sma200,100);
     near(*analyze(flat).volume_ratio20,1); check(!analyze({}).rsi14);
     check(!sma_series(flat,0).back()); check(!rsi_series(std::vector<Candle>(14),14).back());
+    auto trend=flat;
+    for (std::size_t i=0;i<trend.size();++i) trend[i].close=100+static_cast<double>(i);
+    near(*rsi_series(trend).back(),100);
+    for (std::size_t i=0;i<trend.size();++i) trend[i].close=500-static_cast<double>(i);
+    near(*rsi_series(trend).back(),0);
     auto malformed = flat; malformed[5].close=std::numeric_limits<double>::quiet_NaN();
     check(!analyze(malformed).rsi14);check(!sma_series(malformed,20).back());
     malformed=flat;malformed[2].volume=-1;check(!volume_ratio_series(malformed).back());
     malformed=flat;malformed[2].low=103;check(!atr_series(malformed).back());
+    malformed=flat;for(auto& c:malformed)c.close=std::numeric_limits<double>::max();
+    check(!sma_series(malformed,20).back());
     SignalSettings settings; settings.above_sma200_enabled=false;settings.near_target_enabled=false;
     Analysis analysis;analysis.rsi14=20;
     check(evaluate_signals(analysis,100,{},false,false,settings).matched);
@@ -44,6 +51,14 @@ int main() {
     check(!evaluate_signals({},100,{},false,false,settings).matched);
     settings.require_all=true;settings.above_sma200_enabled=true;
     check(!evaluate_signals(analysis,100,{},false,false,settings).matched);
+    SignalSettings test_rules; test_rules.rsi_oversold_enabled=false;
+    test_rules.above_sma200_enabled=false;test_rules.near_target_enabled=true;test_rules.near_target_percent=100;
+    const std::vector<Candle> history{{"2026-07-01",10,10,10,10,100},
+        {"2026-07-02",10,11,10,11,100},{"2026-07-03",11,12,11,12,100}};
+    const auto backtest=run_backtest(history,history,test_rules,10,100,0);
+    check(backtest.has_value());near(backtest->strategy_final_value,120);near(backtest->benchmark_final_value,120);
+    check(backtest->completed_trades==1);
+    check(!run_backtest({},history,test_rules,10,100,0));
     DividendEvent event; event.record_date="2026-07-08";event.amount_per_share=10;
     event.currency="RUB";event.status=DividendStatus::Approved;
     std::vector<TradingDay> calendar{{"2026-07-01",true,""},{"2026-07-02",true,""},

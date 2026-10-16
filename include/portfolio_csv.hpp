@@ -16,5 +16,4 @@ ImportPreview preview_portfolio_csv(std::string_view csv, const std::vector<Port
 std::optional<std::vector<PortfolioTransaction>> prepare_portfolio_import(const ImportPreview& preview,
     const std::vector<PortfolioTransaction>& existing, bool include_duplicates, std::string& error);
 std::string export_portfolio_csv(const std::vector<PortfolioTransaction>& transactions);
-std::optional<double> portfolio_weight(const PortfolioSummary& summary, const PortfolioPosition& position, bool all_prices_fresh);
 } // namespace moexwatch

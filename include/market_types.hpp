@@ -47,8 +47,6 @@ struct TradingDay {
     std::string session_date; // Weekend session can belong to a later business day.
 };
 
-// Invalid provider responses throw; a recognized empty table is a valid empty result.
-
 struct Quote {
     std::string ticker;
     std::optional<double> last;

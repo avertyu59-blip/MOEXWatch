@@ -35,7 +35,7 @@ std::runtime_error network_error(const char* message) {
 }
 
 std::string https_get(const std::wstring& path, const wchar_t* host = L"iss.moex.com") {
-    InternetHandle session(WinHttpOpen(L"MOEXWatch/0.6.3", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
+    InternetHandle session(WinHttpOpen(L"MOEXWatch/0.6.4", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
                                        WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0));
     if (!session.value) throw network_error("Не удалось открыть HTTPS-сессию");
     WinHttpSetTimeouts(session.value, 5000, 5000, 6000, 6000);

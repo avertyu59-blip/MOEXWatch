@@ -10,6 +10,10 @@
 #include <sstream>
 namespace moexwatch {
 namespace {
+std::vector<std::optional<double>> finite_values(std::vector<std::optional<double>> values) {
+    for (auto& value : values) if (value && !std::isfinite(*value)) value.reset();
+    return values;
+}
 bool valid_closes(const std::vector<Candle>& candles) {
     return std::all_of(candles.begin(), candles.end(), [](const auto& c) { return std::isfinite(c.close) && c.close > 0.0; });
 }
@@ -17,19 +21,19 @@ std::string date_key(const Candle& candle) { return candle.date.size() < 10 ? st
 }
 std::vector<std::optional<double>> sma_series(const std::vector<Candle>& candles, std::size_t period) {
     std::vector<std::optional<double>> values(candles.size());
-    if (period == 0 || !valid_closes(candles)) return values;
+    if (period == 0 || !valid_closes(candles)) return finite_values(std::move(values));
     double sum = 0.0;
     for (std::size_t i = 0; i < candles.size(); ++i) {
         sum += candles[i].close;
         if (i >= period) sum -= candles[i - period].close;
         if (i + 1 >= period) values[i] = sum / static_cast<double>(period);
     }
-    return values;
+    return finite_values(std::move(values));
 }
 
 std::vector<std::optional<double>> rsi_series(const std::vector<Candle>& candles, std::size_t period) {
     std::vector<std::optional<double>> values(candles.size());
-    if (period == 0 || candles.size() <= period || !valid_closes(candles)) return values;
+    if (period == 0 || candles.size() <= period || !valid_closes(candles)) return finite_values(std::move(values));
     double gain = 0.0, loss = 0.0;
     for (std::size_t i = 1; i <= period; ++i) {
         const double change = candles[i].close - candles[i - 1].close;
@@ -45,7 +49,7 @@ std::vector<std::optional<double>> rsi_series(const std::vector<Candle>& candles
         loss = (loss * (length - 1.0) + std::max(-change, 0.0)) / length;
         values[i] = value();
     }
-    return values;
+    return finite_values(std::move(values));
 }
 
 std::vector<std::optional<double>> atr_series(const std::vector<Candle>& candles, std::size_t period) {
@@ -53,7 +57,7 @@ std::vector<std::optional<double>> atr_series(const std::vector<Candle>& candles
     if (period == 0 || candles.size() < period || !valid_closes(candles) ||
         !std::all_of(candles.begin(), candles.end(), [](const auto& c) {
             return std::isfinite(c.high) && std::isfinite(c.low) && c.low > 0.0 && c.high >= c.low;
-        })) return values;
+        })) return finite_values(std::move(values));
 
     const auto true_range = [&](std::size_t index) {
         const auto& candle = candles[index];
@@ -73,13 +77,13 @@ std::vector<std::optional<double>> atr_series(const std::vector<Candle>& candles
         average = (average * (length - 1.0) + true_range(i)) / length;
         values[i] = average;
     }
-    return values;
+    return finite_values(std::move(values));
 }
 
 std::vector<std::optional<double>> volume_ratio_series(const std::vector<Candle>& candles, std::size_t period) {
     std::vector<std::optional<double>> values(candles.size());
     if (period == 0 || candles.size() <= period ||
-        !std::all_of(candles.begin(), candles.end(), [](const auto& c) { return std::isfinite(c.volume) && c.volume >= 0.0; })) return values;
+        !std::all_of(candles.begin(), candles.end(), [](const auto& c) { return std::isfinite(c.volume) && c.volume >= 0.0; })) return finite_values(std::move(values));
 
     double sum = 0.0;
     for (std::size_t i = 0; i < candles.size(); ++i) {
@@ -91,7 +95,7 @@ std::vector<std::optional<double>> volume_ratio_series(const std::vector<Candle>
                 values[i] = candles[i].volume / average;
         }
     }
-    return values;
+    return finite_values(std::move(values));
 }
 
 NormalizedComparison normalized_comparison_series(const std::vector<Candle>& stock,
@@ -128,6 +132,8 @@ NormalizedComparison normalized_comparison_series(const std::vector<Candle>& sto
             !std::isfinite(stock[i].close) || stock[i].close <= 0.0) continue;
         result.stock[i] = stock[i].close / *stock_base * 100.0;
         result.benchmark[i] = found->second / *benchmark_base * 100.0;
+        if (!std::isfinite(*result.stock[i])) result.stock[i].reset();
+        if (!std::isfinite(*result.benchmark[i])) result.benchmark[i].reset();
     }
     return result;
 }
@@ -149,6 +155,9 @@ Analysis analyze(const std::vector<Candle>& candles) {
     double peak = candles.front().high;
     for (const auto& candle : candles) peak = std::max(peak, candle.high);
     if (peak > 0.0) result.drawdown_percent = (candles.back().close / peak - 1.0) * 100.0;
+    std::optional<double>* numbers[] = {&result.sma20,&result.sma50,&result.sma200,&result.rsi14,
+        &result.volume_ratio20,&result.atr14,&result.atr_percent,&result.drawdown_percent,&result.period_change_percent};
+    for (auto* value : numbers) if (*value && !std::isfinite(**value)) value->reset();
     if (!result.rsi14) result.technical_note = "Для RSI14 нужно не менее 15 свечей";
     else if (*result.rsi14 > 70.0) result.technical_note = "Перекупленность: RSI14 > 70";
     else if (*result.rsi14 < 30.0) result.technical_note = "Перепроданность: RSI14 < 30";

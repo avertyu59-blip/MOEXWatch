@@ -183,6 +183,28 @@ int main(){try{
     check(!app.app_busy&&IsWindowEnabled(GetDlgItem(app.app_window,ID_REFRESH)),"refresh completion restores global button state");
     check(app.app_items[0].quote.last==190&&app.app_items[0].target==200,"refresh updates quote but preserves user target");
     check(app.app_active_page==2&&ListView_GetItemCount(app.portfolio_page.transactions_list)==2,"refresh updates views without changing active page or operations");
+    // Real Win32 views consume domain results; no provider requests or account writes.
+    app.trades_page.records={{"SBER",10,100,120,10,13},{"SBER",5,120,100,5,13}};
+    app.fill_trades();
+    check(app.narrow(app.read_edit(app.trades_page.summary)).find("60.30")!=std::string::npos,"closed trades display domain net total");
+    auto& dividend_item=app.app_items[0];
+    dividend_item.dividends_stale=false;
+    DividendEvent dividend;dividend.record_date="2026-07-08";dividend.last_buy_date="2026-07-07";
+    dividend.amount_per_share=10;dividend.currency="RUB";dividend.status=DividendStatus::Approved;
+    dividend_item.dividends={dividend};
+    app.portfolio_page.transactions={{"2026-07-01",dividend_item.ticker,PortfolioSide::Buy,10,100,0}};
+    app.charts_page.dividend_instrument=0;
+    app.charts_page.dividend_list=CreateWindowExW(0,WC_LISTVIEWW,L"",WS_CHILD|LVS_REPORT,0,0,800,200,app.app_window,nullptr,GetModuleHandleW(nullptr),nullptr);
+    check(app.charts_page.dividend_list!=nullptr,"dividend result view created");
+    for(int i=0;i<11;++i){LVCOLUMNW column{};column.mask=LVCF_WIDTH;column.cx=120;ListView_InsertColumn(app.charts_page.dividend_list,i,&column);}
+    app.fill_dividend_list();
+    wchar_t expected_text[1024]{};
+    ListView_GetItemText(app.charts_page.dividend_list,0,10,expected_text,1024);
+    check(app.narrow(expected_text).find("100.00 RUB")!=std::string::npos,"dividend view displays expected gross entitlement from domain");
+    dividend_item.dividends_stale=true;app.fill_dividend_list();
+    ListView_GetItemText(app.charts_page.dividend_list,0,10,expected_text,1024);
+    check(app.narrow(expected_text).starts_with("н/д:"),"stale event cannot display confirmed portfolio estimate");
+    DestroyWindow(app.charts_page.dividend_list);app.charts_page.dividend_list=nullptr;
     Application first_owner,second_owner;
     first_owner.app_storage_blocked=true;second_owner.app_storage_blocked=true;
     WNDCLASSEXW wc{};wc.cbSize=sizeof(wc);wc.hInstance=GetModuleHandleW(nullptr);wc.lpfnWndProc=router_host;wc.lpszClassName=L"MOEXWatchRouterTest";
