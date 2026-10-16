@@ -49,6 +49,7 @@ int main(){try{
     check(validate_candle_page(header+"2026-10-15 00:00:00;100;110;90;105;1000\n").size()==1,"valid OHLC accepted");
     for(const auto& bad:{"2026-02-30;100;110;90;105;1000\n","2026-10-15;100;99;90;105;1000\n","2026-10-15;100;110;90;105;-1\n","2026-10-15;broken;110;90;105;1000\n"})rejects<ValidationFailure>([&]{validate_candle_page(header+bad);});
     rejects<ValidationFailure>([&]{validate_candle_page(header+"2026-10-15;100;110;90;105;1000\n2026-10-15;100;110;90;105;1000\n");});
+    input.close();
     std::filesystem::remove_all(root);
     std::cout<<"io_runtime_tests: retries, cancellation, lifecycle, diagnostics and validation passed\n";
 }catch(const std::exception& ex){std::cerr<<ex.what()<<'\n';return 1;}}
