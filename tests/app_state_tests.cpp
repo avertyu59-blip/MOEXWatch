@@ -23,12 +23,13 @@ int main(){try{
     market.instruments[1].target=150;
     DividendEvent event;event.amount_per_share=10;market.instruments[1].dividends={event};
     const auto first=market.begin_refresh();check(first.has_value(),"request starts");
+    market.instruments[1].target=155; // Edit while request is in flight.
     check(!market.begin_refresh(),"overlapping request queued without another worker");
     auto fetched=item("SBER",120);fetched.target=999;fetched.dividends={};
     MarketRefreshResult response;response.instruments={fetched};response.imoex_candles={{"2026-01-01",1,1,1,1,1}};
     check(market.apply_refresh(*first+1,response)==MarketState::ApplyResult::Ignored&&market.refreshing(),"wrong response cannot finish active request");
     check(market.apply_refresh(*first,response)==MarketState::ApplyResult::Applied,"matching response applied");
-    check(market.instruments[1].quote.last==120&&market.instruments[1].target==150,"market update preserves edited target");
+    check(market.instruments[1].quote.last==120&&market.instruments[1].target==155,"market update preserves edited target");
     check(market.instruments[1].dividends.size()==1,"market update preserves independently loaded dividends");
     check(!market.imoex_stale,"benchmark success clears stale flag");
     check(market.take_pending_refresh()&&!market.take_pending_refresh(),"pending refresh consumed exactly once");

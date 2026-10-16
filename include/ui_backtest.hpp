@@ -9,7 +9,6 @@
 
 namespace moexwatch::ui {
 struct BacktestState {
-    bool updating{};
     HWND ticker{};
     HWND capital{};
     HWND fee{};

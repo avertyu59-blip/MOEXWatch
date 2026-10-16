@@ -128,10 +128,12 @@ int main(){try{
     app.state.market.instruments.push_back(second);
     app.charts_page.sort={1,true};app.fill_list();
     check(row_data(app.charts_page.list,0)==1,"watch table sorts without changing instrument identity");
+    app.dividends_page.ticker="SBER";app.dividends_page.chart_sessions=22;
     ListView_SetItemState(app.charts_page.list,0,LVIS_SELECTED,LVIS_SELECTED);
     NMLISTVIEW selected{};selected.hdr.hwndFrom=app.charts_page.list;selected.hdr.idFrom=ID_LIST;selected.hdr.code=LVN_ITEMCHANGED;
     app.handle_window_message(app.shell.window,WM_NOTIFY,ID_LIST,reinterpret_cast<LPARAM>(&selected));
     check(app.charts_page.selection.ticker=="GAZP","main coordinator forwards selected stock to analytics");
+    check(app.dividends_page.ticker=="SBER","choosing another stock leaves dividend window selection independent");
     SetWindowTextW(app.charts_page.target_edit,L"150");
     app.handle_window_message(app.shell.window,WM_COMMAND,MAKEWPARAM(ID_TARGET_SET,0),0);
     check(app.state.market.instruments[1].target==150&&app.state.market.instruments[0].target==200,"target edit applies to selected stock after sorting");
@@ -141,6 +143,7 @@ int main(){try{
         app.handle_window_message(app.shell.window,WM_COMMAND,MAKEWPARAM(ID_RANGE,CBN_SELCHANGE),0);
         check(app.charts_page.chart_sessions==sessions[range],"range command reaches chart module");
     }
+    check(app.dividends_page.chart_sessions==22,"analytics range does not change dividend chart range");
     SendMessageW(GetDlgItem(app.shell.window,ID_FILTER),CB_SETCURSEL,4,0);
     app.handle_window_message(app.shell.window,WM_COMMAND,MAKEWPARAM(ID_FILTER,CBN_SELCHANGE),0);
     check(ListView_GetItemCount(app.charts_page.list)==0&&app.state.market.instruments.size()==2,"empty filter does not remove watched stocks");
