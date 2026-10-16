@@ -2,7 +2,7 @@ name: Publish versioned Windows releases
 
 on:
   push:
-    branches: ["main", "feature/0.3.1-position-levels"]
+    branches: ["main"]
     tags: ["v[0-9]*"]
     paths:
       - "VERSION.txt"
@@ -79,3 +79,4 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RELEASE_PLAN: ${{ needs.plan.outputs.releases }}
         run: ./.github/scripts/publish-releases.ps1
+
