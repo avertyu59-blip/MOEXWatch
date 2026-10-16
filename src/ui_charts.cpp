@@ -22,17 +22,6 @@ bool Application::select_instrument(std::string_view ticker,bool reveal) {
     return true;
 }
 
-void Application::save_watchlist() {
-    if (state.persistence.writes_blocked) return;
-    try { storage::save_watchlist(storage::data_directory(), state.market.instruments); }
-    catch (const std::exception& ex) { storage_failure(ex.what()); }
-}
-
-void Application::load_watchlist() {
-    try { auto loaded = state.market.instruments; storage::load_watchlist(storage::data_directory(), loaded, !state.persistence.writes_blocked); state.market.instruments = std::move(loaded); }
-    catch (const std::exception& ex) { storage_failure(ex.what()); }
-}
-
 std::string Application::status_for(const Instrument& item) {
     if (!item.quote.last) return !item.candles.empty() && item.candles_stale ? "График из кэша; нет котировки" : (item.error.empty() ? "Нет котировки" : "Ошибка данных");
     if (item.quote_stale) return "Котировка устарела";
@@ -126,7 +115,7 @@ void Application::add_ticker() {
     SendMessageW(portfolio_page.ticker, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(widen(ticker).c_str()));
     SendMessageW(portfolio_page.ticker, CB_SETCURSEL, static_cast<WPARAM>(state.market.instruments.size() - 1), 0);
     SendMessageW(backtest_page.ticker, CB_SETCURSEL, static_cast<WPARAM>(state.market.instruments.size() - 1), 0);
-    SetWindowTextW(charts_page.ticker_edit, L""); save_watchlist(); fill_list(); fill_signals(); signals_page.baseline_ready = false; refresh_data();
+    SetWindowTextW(charts_page.ticker_edit, L""); if(!state.persistence.writes_blocked)storage_operation([&]{app_storage.save_watchlist(state.market.instruments);}); fill_list(); fill_signals(); signals_page.baseline_ready = false; refresh_data();
 }
 
 void Application::set_target() {
@@ -143,7 +132,7 @@ void Application::set_target() {
             state.market.instruments[static_cast<std::size_t>(selected)].target = value;
         } catch (...) { MessageBoxW(shell.window, L"Введите положительную цену. Для очистки оставьте поле пустым.", L"Некорректная цель", MB_ICONWARNING); return; }
     }
-    save_watchlist(); fill_list(); fill_signals(); signals_page.baseline_ready = false;
+    if(!state.persistence.writes_blocked)storage_operation([&]{app_storage.save_watchlist(state.market.instruments);}); fill_list(); fill_signals(); signals_page.baseline_ready = false;
 }
 
 void Application::remove_selected() {
@@ -165,7 +154,7 @@ void Application::remove_selected() {
     SendMessageW(backtest_page.ticker, CB_DELETESTRING, static_cast<WPARAM>(selected), 0);
     if (!state.market.instruments.empty()) SendMessageW(backtest_page.ticker, CB_SETCURSEL, static_cast<WPARAM>(std::min(static_cast<std::size_t>(selected), state.market.instruments.size() - 1)), 0);
     // The ticker selection is reconciled by fill_list, independent of vector indices.
-    save_watchlist(); fill_list(); fill_signals(); signals_page.baseline_ready = false; InvalidateRect(shell.window, nullptr, TRUE);
+    if(!state.persistence.writes_blocked)storage_operation([&]{app_storage.save_watchlist(state.market.instruments);}); fill_list(); fill_signals(); signals_page.baseline_ready = false; InvalidateRect(shell.window, nullptr, TRUE);
 }
 
 void Application::create_charts_controls(HWND window) {

@@ -4,7 +4,7 @@
 namespace moexwatch::ui {
 Application::~Application(){shutdown_tasks();}
 FetchContext Application::fetch_context(std::uint64_t request) {
-    const auto root=storage::data_directory();
+    const auto root=app_storage.root();
     if(!log)log=std::make_shared<DiagnosticLog>(root/L"logs"/L"diagnostic.log");
     return {{},winhttp_get,log,request,root};
 }

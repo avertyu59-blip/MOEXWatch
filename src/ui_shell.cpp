@@ -9,6 +9,11 @@ void Application::storage_failure(const char* error) {
         "\nСделайте резервную копию. До исправления ошибки автоматическая запись отключена.").c_str(), L"MOEXWatch", MB_ICONERROR);
 }
 
+bool Application::storage_operation(const std::function<void()>& operation) {
+    try { operation(); return true; }
+    catch (const std::exception& ex) { storage_failure(ex.what()); return false; }
+}
+
 void Application::refresh_data() {
     const auto request=state.market.begin_refresh();
     if(!request)return;
@@ -71,11 +76,15 @@ void Application::start_backup() {
     if (!IsWindowEnabled(shell.backup_button)) return;
     // Flush the UI-owned state before the worker takes a consistent disk snapshot.
     // If loading failed, preserve the original files for recovery instead.
-    if (!state.persistence.writes_blocked) { save_watchlist(); save_trades(); save_portfolio(); save_signal_settings(); }
+    if (!state.persistence.writes_blocked && !storage_operation([&]{ app_storage.save_watchlist(state.market.instruments); app_storage.save_trades(trades_page.records); app_storage.save_portfolio({portfolio_page.transactions,portfolio_page.position_levels,portfolio_page.unresolved_levels,portfolio_page.sequence_watermark}); app_storage.save_signal_settings(signals_page.settings); })) {
+        EnableWindow(shell.backup_button, TRUE);
+        return;
+    }
     EnableWindow(shell.backup_button, FALSE);
-    try {const auto root=storage::data_directory();
-    tasks.start(TaskKind::Backup,mailbox,[root](std::stop_token stop)->BackgroundEvent {
-        BackupResult result;try{result.path=storage::create_backup(root,stop);}catch(const Cancelled&){result.cancelled=true;}catch(const std::exception& ex){result.error=ex.what();}
+    try {
+    const auto backup_storage=app_storage;
+    tasks.start(TaskKind::Backup,mailbox,[backup_storage](std::stop_token stop)->BackgroundEvent {
+        BackupResult result;try{result.path=backup_storage.create_backup(stop);}catch(const Cancelled&){result.cancelled=true;}catch(const std::exception& ex){result.error=ex.what();}
         return {0,std::move(result)};
     });}catch(const std::exception& ex){EnableWindow(shell.backup_button,TRUE);MessageBoxW(shell.window,widen(ex.what()).c_str(),L"Резервная копия",MB_ICONERROR);}
 }
@@ -115,8 +124,14 @@ void Application::create_controls(HWND window) {
 LRESULT CALLBACK Application::handle_window_message(HWND window, UINT message, WPARAM wparam, LPARAM lparam) {
     switch (message) {
     case WM_CREATE:
-        shell.window = window; create_controls(window); load_signal_settings(); synchronize_signal_controls();
-        update_auto_refresh_timer(); load_watchlist(); load_observations(); load_trades(); load_portfolio(); load_market_cache(state.market.instruments, state.market.imoex_candles, state.market.imoex_error); fill_list(); fill_trades(); fill_signals(); fill_portfolio();
+        shell.window = window; create_controls(window);
+        storage_operation([&]{ signals_page.settings=app_storage.load_signal_settings(signals_page.settings,!state.persistence.writes_blocked); });
+        synchronize_signal_controls(); update_auto_refresh_timer();
+        storage_operation([&]{ state.market.instruments=app_storage.load_watchlist(state.market.instruments,!state.persistence.writes_blocked); });
+        load_observations();
+        storage_operation([&]{ trades_page.records=app_storage.load_trades(trades_page.records,!state.persistence.writes_blocked); });
+        storage_operation([&]{ auto journal=app_storage.load_portfolio(!state.persistence.writes_blocked); portfolio_page.sequence_watermark=journal.sequence_watermark; portfolio_page.transactions=std::move(journal.transactions); portfolio_page.position_levels=std::move(journal.levels); portfolio_page.unresolved_levels=std::move(journal.unresolved_levels); });
+        load_market_cache(state.market.instruments, state.market.imoex_candles, state.market.imoex_error); fill_list(); fill_trades(); fill_signals(); fill_portfolio();
         for (const auto& item : state.market.instruments) {
             SendMessageW(backtest_page.ticker, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(widen(item.ticker).c_str()));
             SendMessageW(portfolio_page.ticker, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(widen(item.ticker).c_str()));
@@ -220,7 +235,7 @@ LRESULT CALLBACK Application::handle_window_message(HWND window, UINT message, W
         shutdown_tasks();
         KillTimer(window,TIMER_TASKS);
         KillTimer(window, TIMER_AUTO_REFRESH);
-        save_watchlist(); save_trades(); save_portfolio(); save_signal_settings();
+        if (!state.persistence.writes_blocked) storage_operation([&]{ app_storage.save_watchlist(state.market.instruments); app_storage.save_trades(trades_page.records); app_storage.save_portfolio({portfolio_page.transactions,portfolio_page.position_levels,portfolio_page.unresolved_levels,portfolio_page.sequence_watermark}); app_storage.save_signal_settings(signals_page.settings); });
         if (signals_page.notification_icon_ready) Shell_NotifyIconW(NIM_DELETE, &signals_page.notification_icon);
         if (shell.font) DeleteObject(shell.font); PostQuitMessage(0); return 0;
     }

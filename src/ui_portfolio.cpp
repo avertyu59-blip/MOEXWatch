@@ -1,22 +1,6 @@
 #include "ui_app.hpp"
 #ifdef _WIN32
 namespace moexwatch::ui {
-void Application::save_portfolio() {
-    if (state.persistence.writes_blocked) return;
-    try { storage::save_portfolio_journal(storage::data_directory(),
-        {portfolio_page.transactions,portfolio_page.position_levels,portfolio_page.unresolved_levels,portfolio_page.sequence_watermark}); }
-    catch (const std::exception& ex) { storage_failure(ex.what()); }
-}
-void Application::load_portfolio() {
-    try {
-        auto journal=storage::load_portfolio_journal(storage::data_directory(),!state.persistence.writes_blocked);
-        portfolio_page.sequence_watermark=journal.sequence_watermark;
-        portfolio_page.transactions=std::move(journal.transactions);
-        portfolio_page.position_levels=std::move(journal.levels);
-        portfolio_page.unresolved_levels=std::move(journal.unresolved_levels);
-    } catch(const std::exception& ex){storage_failure(ex.what());}
-}
-
 std::vector<Quote> Application::portfolio_quotes() {
     std::vector<Quote> quotes;
     quotes.reserve(state.market.instruments.size());
@@ -175,8 +159,7 @@ void Application::save_selected_position_levels() {
     auto candidate=portfolio_page.position_levels;
     std::erase_if(candidate,[&](const auto& existing){return existing.position_id==levels.position_id;});
     if(levels.stop_loss||levels.take_profit)candidate.push_back(levels);
-    if(!state.persistence.writes_blocked)try{storage::save_portfolio_journal(storage::data_directory(),{portfolio_page.transactions,candidate,portfolio_page.unresolved_levels,portfolio_page.sequence_watermark});}
-    catch(const std::exception& ex){storage_failure(ex.what());return;}
+    if(!state.persistence.writes_blocked&&!storage_operation([&]{app_storage.save_portfolio({portfolio_page.transactions,candidate,portfolio_page.unresolved_levels,portfolio_page.sequence_watermark});}))return;
     portfolio_page.position_levels=std::move(candidate);fill_portfolio();InvalidateRect(shell.window,nullptr,TRUE);
 }
 
@@ -204,9 +187,7 @@ void Application::add_portfolio_transaction() {
     candidate.push_back(transaction);
     try{candidate=identify_portfolio(std::move(candidate),portfolio_page.sequence_watermark);}
     catch(const std::exception& ex){MessageBoxW(shell.window,widen(ex.what()).c_str(),L"Операция не добавлена",MB_ICONWARNING);return;}
-    if(!state.persistence.writes_blocked)try{
-        storage::save_portfolio_journal(storage::data_directory(),{candidate,portfolio_page.position_levels,portfolio_page.unresolved_levels,portfolio_page.sequence_watermark});
-    }catch(const std::exception& ex){storage_failure(ex.what());return;}
+    if(!state.persistence.writes_blocked&&!storage_operation([&]{app_storage.save_portfolio({candidate,portfolio_page.position_levels,portfolio_page.unresolved_levels,portfolio_page.sequence_watermark});}))return;
     for(const auto& t:candidate)portfolio_page.sequence_watermark=std::max(portfolio_page.sequence_watermark,t.sequence);
     portfolio_page.transactions = std::move(candidate);
     fill_portfolio();
@@ -231,9 +212,7 @@ void Application::delete_portfolio_transaction() {
             L"\nИзменятся границы или исчезнет цикл позиции. Связанные уровни останутся привязаны к прежнему ID и не перейдут новой покупке.";
         if(MessageBoxW(shell.window,text.c_str(),L"Последствия удаления",MB_YESNO|MB_ICONWARNING|MB_DEFBUTTON2)!=IDYES)return;
     }
-    if(!state.persistence.writes_blocked)try{
-        storage::save_portfolio_journal(storage::data_directory(),{candidate,portfolio_page.position_levels,portfolio_page.unresolved_levels,portfolio_page.sequence_watermark});
-    }catch(const std::exception& ex){storage_failure(ex.what());return;}
+    if(!state.persistence.writes_blocked&&!storage_operation([&]{app_storage.save_portfolio({candidate,portfolio_page.position_levels,portfolio_page.unresolved_levels,portfolio_page.sequence_watermark});}))return;
     portfolio_page.transactions=std::move(candidate);fill_portfolio();InvalidateRect(shell.window,nullptr,TRUE);
 }
 
@@ -253,8 +232,7 @@ void Application::resolve_legacy_levels() {
         level.position_id=position->position_id;level.opened_on=position->opened_on;
         auto levels=portfolio_page.position_levels;auto unresolved=portfolio_page.unresolved_levels;
         std::erase_if(levels,[&](const auto& old){return old.position_id==level.position_id;});levels.push_back(level);unresolved.erase(unresolved.begin()+static_cast<std::ptrdiff_t>(i));
-        if(!state.persistence.writes_blocked)try{storage::save_portfolio_journal(storage::data_directory(),{portfolio_page.transactions,levels,unresolved,portfolio_page.sequence_watermark});}
-        catch(const std::exception& ex){storage_failure(ex.what());return;}
+        if(!state.persistence.writes_blocked&&!storage_operation([&]{app_storage.save_portfolio({portfolio_page.transactions,levels,unresolved,portfolio_page.sequence_watermark});}))return;
         portfolio_page.position_levels=std::move(levels);portfolio_page.unresolved_levels=std::move(unresolved);fill_portfolio();return;
     }
     MessageBoxW(shell.window,L"Нет несопоставленных уровней для выбранного тикера.",L"Уровни",MB_ICONINFORMATION);
@@ -278,10 +256,10 @@ void Application::export_portfolio_operations() {
         if(state.persistence.writes_blocked)throw std::runtime_error("Сначала устраните ошибку загрузки журналов, чтобы не экспортировать неполный портфель");
         const auto path=select_operations_csv(true);if(!path)return;
         auto target=std::filesystem::weakly_canonical(*path).wstring();
-        auto root=std::filesystem::weakly_canonical(storage::data_directory()).wstring();
+        auto root=std::filesystem::weakly_canonical(app_storage.root()).wstring();
         const auto lowercase=[](std::wstring& value){for(auto& c:value)c=static_cast<wchar_t>(std::towlower(c));};lowercase(target);lowercase(root);
         if(target==root || target.starts_with(root+L"\\"))throw std::runtime_error("Выберите папку вне APPDATA/MOEXWatch: экспорт не должен заменять рабочие данные или резервные копии");
-        storage::atomic_write(*path,export_portfolio_csv(portfolio_page.transactions));
+        app_storage.atomic_write(*path,export_portfolio_csv(portfolio_page.transactions));
         MessageBoxW(shell.window,(L"Операции экспортированы:\n"+path->wstring()+L"\nФормат: CSV UTF-8, разделитель ;, количество указано в акциях.").c_str(),L"Экспорт CSV",MB_ICONINFORMATION);
     }catch(const std::exception& ex){MessageBoxW(shell.window,widen(ex.what()).c_str(),L"Экспорт не выполнен",MB_ICONERROR);}
 }
@@ -290,17 +268,17 @@ void Application::import_portfolio_operations() {
     try {
         if(state.persistence.writes_blocked)throw std::runtime_error("Сначала устраните ошибку хранения пользовательских данных");
         const auto path=select_operations_csv(false);if(!path)return;
-        const auto csv=storage::read_text(*path);if(!csv)throw std::runtime_error("CSV-файл не найден");
+        const auto csv=app_storage.read_text(*path);if(!csv)throw std::runtime_error("CSV-файл не найден");
         // Synchronize existing state without changing its content before opening a preview.
-        save_watchlist();save_trades();save_portfolio();save_signal_settings();
+        storage_operation([&]{app_storage.save_watchlist(state.market.instruments); app_storage.save_trades(trades_page.records); app_storage.save_portfolio({portfolio_page.transactions,portfolio_page.position_levels,portfolio_page.unresolved_levels,portfolio_page.sequence_watermark}); app_storage.save_signal_settings(signals_page.settings);});
         if(state.persistence.writes_blocked)throw std::runtime_error("Не удалось сохранить текущие записи; импорт отменён");
-        const auto root=storage::data_directory();const auto original=storage::read_text(root/"portfolio_journal_v2.csv");
+        const auto root=app_storage.root();const auto original=app_storage.read_text("portfolio_journal_v2.csv");
         std::filesystem::path backup;
         const bool imported=review_portfolio_import(shell.window,shell.font,*csv,portfolio_page.transactions,[&](const auto& candidate){
-            if(storage::read_text(root/"portfolio_journal_v2.csv")!=original)throw std::runtime_error("Журнал изменился после открытия просмотра. Закройте окно и повторите импорт.");
-            backup=storage::create_backup(root);
-            if(storage::read_text(root/"portfolio_journal_v2.csv")!=original)throw std::runtime_error("Журнал изменился во время резервирования. Повторите импорт.");
-            storage::save_portfolio_journal(root,{candidate,portfolio_page.position_levels,portfolio_page.unresolved_levels,portfolio_page.sequence_watermark});
+            if(app_storage.read_text("portfolio_journal_v2.csv")!=original)throw std::runtime_error("Журнал изменился после открытия просмотра. Закройте окно и повторите импорт.");
+            backup=app_storage.create_backup();
+            if(app_storage.read_text("portfolio_journal_v2.csv")!=original)throw std::runtime_error("Журнал изменился во время резервирования. Повторите импорт.");
+            app_storage.save_portfolio({candidate,portfolio_page.position_levels,portfolio_page.unresolved_levels,portfolio_page.sequence_watermark});
             for(const auto& t:candidate)portfolio_page.sequence_watermark=std::max(portfolio_page.sequence_watermark,t.sequence);
             portfolio_page.transactions=candidate;
         },portfolio_page.sequence_watermark);

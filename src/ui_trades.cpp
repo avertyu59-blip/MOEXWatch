@@ -1,17 +1,6 @@
 #include "ui_app.hpp"
 #ifdef _WIN32
 namespace moexwatch::ui {
-void Application::save_trades() {
-    if (state.persistence.writes_blocked) return;
-    try { storage::save_trades(storage::data_directory(), trades_page.records); }
-    catch (const std::exception& ex) { storage_failure(ex.what()); }
-}
-
-void Application::load_trades() {
-    try { auto loaded = trades_page.records; storage::load_trades(storage::data_directory(), loaded, !state.persistence.writes_blocked); trades_page.records = std::move(loaded); }
-    catch (const std::exception& ex) { storage_failure(ex.what()); }
-}
-
 void Application::fill_trades() {
     if (!trades_page.list) return;
     const ScopedViewUpdate update(trades_page.updating);
@@ -63,7 +52,7 @@ void Application::add_trade() {
         return;
     }
     trades_page.records.push_back(std::move(trade));
-    save_trades(); fill_trades();
+    if(!state.persistence.writes_blocked)storage_operation([&]{app_storage.save_trades(trades_page.records);}); fill_trades();
     SetWindowTextW(trades_page.ticker, L""); SetWindowTextW(trades_page.quantity, L"");
     SetWindowTextW(trades_page.buy, L""); SetWindowTextW(trades_page.sell, L"");
     SetWindowTextW(trades_page.commission, L""); SetWindowTextW(trades_page.tax, L"");
@@ -75,7 +64,7 @@ void Application::delete_trade() {
     const int selected=selected_id?static_cast<int>(*selected_id):-1;
     if (selected < 0 || static_cast<std::size_t>(selected) >= trades_page.records.size()) return;
     trades_page.records.erase(trades_page.records.begin() + selected);
-    save_trades(); fill_trades();
+    if(!state.persistence.writes_blocked)storage_operation([&]{app_storage.save_trades(trades_page.records);}); fill_trades();
 }
 
 void Application::create_trades_controls(HWND window) {

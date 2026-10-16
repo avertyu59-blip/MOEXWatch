@@ -1,6 +1,7 @@
 #pragma once
 #ifdef _WIN32
 #include "app_state.hpp"
+#include "app_storage.hpp"
 #include "async_tasks.hpp"
 #include "ui_shell_state.hpp"
 #include "ui_dividends.hpp"
@@ -27,6 +28,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <iomanip>
 #include <iterator>
 #include <memory>
@@ -94,6 +96,7 @@ public:
     ChartsState charts_page;
     TradesState trades_page;
     ApplicationState state;
+    AppStorage app_storage;
     ShellState shell;
     DividendsState dividends_page;
     TableSort* table_sort(int id);
@@ -108,21 +111,16 @@ public:
     std::wstring widen(std::string_view text);
     std::string narrow(std::wstring_view text);
     std::wstring read_edit(HWND control);
+private:
     void storage_failure(const char* error);
-    void save_signal_settings();
-    void load_signal_settings();
+    bool storage_operation(const std::function<void()>& operation);
+public:
     std::optional<double> parse_finite_number(std::string value);
     void update_auto_refresh_timer();
     std::string money(double value);
-    void save_trades();
-    void load_trades();
-    void save_portfolio();
-    void load_portfolio();
     void resolve_legacy_levels();
     std::string optional_number(std::optional<double> n);
     std::string percent(std::optional<double> n);
-    void save_watchlist();
-    void load_watchlist();
     void refresh_data();
     std::string status_for(const Instrument& item);
     void fill_list();

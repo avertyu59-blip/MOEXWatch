@@ -1,17 +1,6 @@
 #include "ui_app.hpp"
 #ifdef _WIN32
 namespace moexwatch::ui {
-void Application::save_signal_settings() {
-    if (state.persistence.writes_blocked) return;
-    try { storage::save_signal_settings(storage::data_directory(), signals_page.settings); }
-    catch (const std::exception& ex) { storage_failure(ex.what()); }
-}
-
-void Application::load_signal_settings() {
-    try { auto loaded = signals_page.settings; storage::load_signal_settings(storage::data_directory(), loaded, !state.persistence.writes_blocked); signals_page.settings = std::move(loaded); }
-    catch (const std::exception& ex) { storage_failure(ex.what()); }
-}
-
 void Application::update_auto_refresh_timer() {
     if (!shell.window) return;
     KillTimer(shell.window, TIMER_AUTO_REFRESH);
@@ -69,7 +58,7 @@ bool Application::read_signal_settings_from_controls() {
     }
     const bool changed=!same_technical_rules(signals_page.settings,settings);
     signals_page.settings = settings;
-    save_signal_settings();
+    if(!state.persistence.writes_blocked)storage_operation([&]{app_storage.save_signal_settings(signals_page.settings);});
     update_auto_refresh_timer();
     if(changed)signals_page.baseline_ready = false;
     fill_signals();
@@ -145,7 +134,7 @@ void Application::notify_new_signals() {
     if(signals_page.history.size()>2000)signals_page.history.erase(signals_page.history.begin(),signals_page.history.end()-2000);
     signals_page.observation_status="Свежих котировок для проверки: "+std::to_string(fresh_count)+"/"+std::to_string(state.market.instruments.size())+" (возраст до 20 минут, МСК). История не зависит от всплывающих уведомлений.";
     if(signals_page.history_dirty && signals_page.observation_writable)try {
-        storage::atomic_write(storage::data_directory()/"signal_history.csv",serialize_signal_history(signals_page.history));signals_page.history_dirty=false;signals_page.observation_error.clear();
+        app_storage.atomic_write("signal_history.csv",serialize_signal_history(signals_page.history));signals_page.history_dirty=false;signals_page.observation_error.clear();
     }catch(const std::exception& ex){signals_page.observation_error=std::string("Новые события пока только в памяти: ")+ex.what();}
     refresh_observation_page(signals_page.observation_page);
     if (!signals_page.settings.notifications_enabled || newly_matched.empty()) return;
@@ -178,8 +167,8 @@ void Application::notify_new_signals() {
 
 void Application::load_observations() {
     const auto failed=[this](const std::exception& ex){signals_page.observation_writable=false;if(!signals_page.observation_error.empty())signals_page.observation_error+="; ";signals_page.observation_error+=std::string(ex.what())+". Исходный файл сохранён; новые события только в памяти.";};
-    try{if(const auto bytes=storage::read_text(storage::data_directory()/"price_alerts.csv"))signals_page.observer.configure(parse_price_alerts(*bytes));}catch(const std::exception& ex){failed(ex);}
-    try{if(const auto bytes=storage::read_text(storage::data_directory()/"signal_history.csv"))signals_page.history=parse_signal_history(*bytes);}catch(const std::exception& ex){failed(ex);}
+    try{if(const auto bytes=app_storage.read_text("price_alerts.csv"))signals_page.observer.configure(parse_price_alerts(*bytes));}catch(const std::exception& ex){failed(ex);}
+    try{if(const auto bytes=app_storage.read_text("signal_history.csv"))signals_page.history=parse_signal_history(*bytes);}catch(const std::exception& ex){failed(ex);}
     refresh_observation_page(signals_page.observation_page);
 }
 
@@ -231,7 +220,7 @@ void Application::create_observation_controls(HWND window) {
     bindings.error=[this] {return signals_page.observation_status+" "+signals_page.observation_error;};
     bindings.save_rules=[this](const auto& rules){
         if(!signals_page.observation_writable)throw std::runtime_error("Сначала восстановите повреждённые файлы наблюдений из резервной копии");
-        storage::atomic_write(storage::data_directory()/"price_alerts.csv",serialize_price_alerts(rules));signals_page.observer.configure(rules);
+        app_storage.atomic_write("price_alerts.csv",serialize_price_alerts(rules));signals_page.observer.configure(rules);
     };
     bindings.open_ticker=[this](const std::string& ticker){const auto it=std::find_if(state.market.instruments.begin(),state.market.instruments.end(),[&](const auto& item){return item.ticker==ticker;});if(it==state.market.instruments.end()){MessageBoxW(shell.window,L"Бумаги нет в наблюдении. Добавьте тикер на вкладке «Аналитика».",L"История сигналов",MB_ICONINFORMATION);return;}select_instrument(ticker,true);TabCtrl_SetCurSel(shell.tabs,0);activate_page(0);};
     signals_page.observation_page=create_observation_page(window,shell.font,std::move(bindings));
