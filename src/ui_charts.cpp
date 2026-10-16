@@ -29,7 +29,7 @@ void Application::save_watchlist() {
 }
 
 void Application::load_watchlist() {
-    try { auto loaded = state.market.instruments; storage::load_watchlist(storage::data_directory(), loaded); state.market.instruments = std::move(loaded); }
+    try { auto loaded = state.market.instruments; storage::load_watchlist(storage::data_directory(), loaded, !state.persistence.writes_blocked); state.market.instruments = std::move(loaded); }
     catch (const std::exception& ex) { storage_failure(ex.what()); }
 }
 

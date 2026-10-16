@@ -8,7 +8,7 @@ void Application::save_trades() {
 }
 
 void Application::load_trades() {
-    try { auto loaded = trades_page.records; storage::load_trades(storage::data_directory(), loaded); trades_page.records = std::move(loaded); }
+    try { auto loaded = trades_page.records; storage::load_trades(storage::data_directory(), loaded, !state.persistence.writes_blocked); trades_page.records = std::move(loaded); }
     catch (const std::exception& ex) { storage_failure(ex.what()); }
 }
 

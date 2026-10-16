@@ -54,6 +54,9 @@ std::string Application::portfolio_side_name(PortfolioSide side) {
 
 void Application::fill_portfolio() {
     if (!portfolio_page.positions || !portfolio_page.transactions_list || !portfolio_page.summary) return;
+    const auto selected_id=[](HWND list,const std::vector<std::string>& ids){const auto row=selected_row_data(list);return row&&*row<ids.size()?ids[*row]:std::string{};};
+    const auto position_id=selected_id(portfolio_page.positions,portfolio_page.position_row_ids);
+    const auto operation_id=selected_id(portfolio_page.transactions_list,portfolio_page.operation_row_ids);
     const ScopedViewUpdate update(portfolio_page.updating);
     ListView_DeleteAllItems(portfolio_page.positions);
     ListView_DeleteAllItems(portfolio_page.transactions_list);
@@ -112,6 +115,13 @@ void Application::fill_portfolio() {
     }
     apply_table_sort(portfolio_page.positions,ID_PORT_POSITIONS);
     apply_table_sort(portfolio_page.transactions_list,ID_PORT_TRANSACTIONS);
+    const auto restore=[](HWND list,const std::vector<std::string>& ids,const std::string& id){
+        if(id.empty())return false;
+        for(int row=0;row<ListView_GetItemCount(list);++row){const auto index=row_data(list,row);if(index&&*index<ids.size()&&ids[*index]==id){ListView_SetItemState(list,row,LVIS_SELECTED|LVIS_FOCUSED,LVIS_SELECTED|LVIS_FOCUSED);ListView_EnsureVisible(list,row,FALSE);return true;}}return false;
+    };
+    const bool restored_position=restore(portfolio_page.positions,portfolio_page.position_row_ids,position_id);
+    (void)restore(portfolio_page.transactions_list,portfolio_page.operation_row_ids,operation_id);
+    if(!restored_position){SetWindowTextW(portfolio_page.position_stop,L"");SetWindowTextW(portfolio_page.position_take,L"");}
     if (!portfolio) {
         SetWindowTextW(portfolio_page.summary, L"В журнале есть продажа без достаточного остатка. Проверьте и удалите ошибочную операцию.");
         return;

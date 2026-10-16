@@ -29,88 +29,6 @@ std::optional<double> parse_finite_number(std::string value) {
 }
 
 }
-void save_signal_settings(const std::filesystem::path& root, const SignalSettings& value) {
-    std::ostringstream out;
-    out << std::setprecision(12)
-        << "rsi_oversold_enabled=" << (value.rsi_oversold_enabled ? 1 : 0) << '\n'
-        << "rsi_oversold_below=" << value.rsi_oversold_below << '\n'
-        << "rsi_overbought_enabled=" << (value.rsi_overbought_enabled ? 1 : 0) << '\n'
-        << "rsi_overbought_above=" << value.rsi_overbought_above << '\n'
-        << "above_sma200_enabled=" << (value.above_sma200_enabled ? 1 : 0) << '\n'
-        << "near_target_enabled=" << (value.near_target_enabled ? 1 : 0) << '\n'
-        << "near_target_percent=" << value.near_target_percent << '\n'
-        << "require_all=" << (value.require_all ? 1 : 0) << '\n'
-        << "notifications_enabled=" << (value.notifications_enabled ? 1 : 0) << '\n'
-        << "auto_refresh_enabled=" << (value.auto_refresh_enabled ? 1 : 0) << '\n'
-        << "auto_refresh_minutes=" << value.auto_refresh_minutes << '\n';
-    atomic_write(root / "signals.ini", out.str());
-}
-
-void load_signal_settings(const std::filesystem::path& root, SignalSettings& settings) {
-    const auto saved = read_text(root / "signals.ini");
-    if (!saved) return;
-    std::istringstream in(*saved);
-    std::string line;
-    while (std::getline(in, line)) {
-        if (!line.empty() && line.back() == '\r') line.pop_back();
-        const auto sep = line.find('=');
-        if (sep == std::string::npos) continue;
-        const auto key = line.substr(0, sep), value = line.substr(sep + 1);
-        const bool enabled = value == "1";
-        if (key == "rsi_oversold_enabled") settings.rsi_oversold_enabled = enabled;
-        else if (key == "rsi_overbought_enabled") settings.rsi_overbought_enabled = enabled;
-        else if (key == "above_sma200_enabled") settings.above_sma200_enabled = enabled;
-        else if (key == "near_target_enabled") settings.near_target_enabled = enabled;
-        else if (key == "require_all") settings.require_all = enabled;
-        else if (key == "notifications_enabled") settings.notifications_enabled = enabled;
-        else if (key == "auto_refresh_enabled") settings.auto_refresh_enabled = enabled;
-        else if (key == "auto_refresh_minutes") {
-            const auto number = parse_finite_number(value);
-            if (number && std::floor(*number) == *number && (*number == 15 || *number == 30 || *number == 60))
-                settings.auto_refresh_minutes = static_cast<int>(*number);
-        }
-        else if (key == "rsi_oversold_below" || key == "rsi_overbought_above" || key == "near_target_percent") {
-            const auto number = parse_finite_number(value);
-            if (!number) continue;
-            if (key == "rsi_oversold_below") settings.rsi_oversold_below = *number;
-            else if (key == "rsi_overbought_above") settings.rsi_overbought_above = *number;
-            else settings.near_target_percent = *number;
-        }
-    }
-    if (!valid_signal_settings(settings)) settings = SignalSettings{};
-}
-
-void save_trades(const std::filesystem::path& root, const std::vector<Trade>& value) {
-    std::ostringstream out;
-    out << "ticker;quantity;buy_price;sell_price;commission;tax_rate_percent\n";
-    out << std::setprecision(15);
-    for (const auto& trade : value)
-        out << trade.ticker << ';' << trade.quantity << ';' << trade.buy_price << ';' << trade.sell_price << ';'
-            << trade.commission << ';' << trade.tax_rate_percent << '\n';
-    atomic_write(root / "trades.csv", out.str());
-}
-
-void load_trades(const std::filesystem::path& root, std::vector<Trade>& value) {
-    const auto saved = read_text(root / "trades.csv");
-    if (!saved) return;
-    std::istringstream in(*saved);
-    const std::string content((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-    const auto rows = parse_csv(content);
-    if (rows.empty() || rows.front().size() < 6 || rows.front()[0] != "ticker") throw std::runtime_error("Неизвестный формат trades.csv");
-    for (std::size_t i = 1; i < rows.size(); ++i) {
-        if (rows[i].size() != 6) throw std::runtime_error("Неожиданное число полей старого журнала операций");
-        const auto quantity = parse_finite_number(rows[i][1]);
-        const auto buy = parse_finite_number(rows[i][2]);
-        const auto sell = parse_finite_number(rows[i][3]);
-        const auto commission = parse_finite_number(rows[i][4]);
-        const auto tax = parse_finite_number(rows[i][5]);
-        if (!quantity || !buy || !sell || !commission || !tax) throw std::runtime_error("Некорректное число в журнале сделок");
-        Trade trade{rows[i][0], *quantity, *buy, *sell, *commission, *tax};
-        if (!valid_trade(trade)) throw std::runtime_error("Некорректная сделка");
-        value.push_back(std::move(trade));
-    }
-}
-
 void save_portfolio(const std::filesystem::path& root, const std::vector<PortfolioTransaction>& value) {
     if(std::any_of(value.begin(),value.end(),[](const auto& t){return !t.id.empty()||!t.position_id.empty()||t.sequence;}))throw std::runtime_error("Журнал с ID сохраняется только через save_portfolio_journal");
     std::ostringstream out;
@@ -176,44 +94,6 @@ void load_position_levels(const std::filesystem::path& root, std::vector<Positio
         PositionLevels levels{rows[i][0], rows[i][1], stop, take};
         if (!valid_position_levels(levels)) throw std::runtime_error("Некорректные уровни позиции");
         value.push_back(std::move(levels));
-    }
-}
-
-void save_watchlist(const std::filesystem::path& root, const std::vector<Instrument>& value) {
-    std::ostringstream out;
-    out << "# ticker;target\n";
-    for (const auto& item : value) {
-        out << item.ticker << ';';
-        if (item.target) out << std::setprecision(12) << *item.target;
-        out << '\n';
-    }
-    atomic_write(root / "watchlist.csv", out.str());
-}
-
-void load_watchlist(const std::filesystem::path& root, std::vector<Instrument>& value) {
-    const auto saved = read_text(root / "watchlist.csv");
-    std::istringstream in(saved.value_or(""));
-    std::string line;
-    while (std::getline(in, line) && value.size() < 30) {
-        if (!line.empty() && line.back() == '\r') line.pop_back();
-        if (line.empty() || line[0] == '#') continue;
-        const auto sep = line.find(';');
-        std::string ticker = line.substr(0, sep);
-        std::transform(ticker.begin(), ticker.end(), ticker.begin(), [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
-        if (!valid_ticker(ticker) || std::any_of(value.begin(), value.end(), [&](const auto& x) { return x.ticker == ticker; })) throw std::runtime_error("Неверный либо повторный тикер в watchlist.csv");
-        Instrument item; item.ticker = ticker; item.quote.ticker = ticker;
-        if (sep != std::string::npos && sep + 1 < line.size()) {
-            const auto target = parse_finite_number(line.substr(sep+1));
-            if(!target || *target<=0)throw std::runtime_error("Некорректная цель в watchlist.csv");
-            item.target=target;
-        }
-        value.push_back(std::move(item));
-    }
-    if (value.empty() && !saved) {
-        for (const char* ticker : {"GAZP", "LKOH", "SBER", "ROSN", "OZON", "T", "YDEX", "NVTK", "SMLT", "VTBR"}) {
-            Instrument item; item.ticker = ticker; item.quote.ticker = ticker; value.push_back(std::move(item));
-        }
-
     }
 }
 

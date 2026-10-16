@@ -42,6 +42,12 @@ int main(){try{
         check(tasks.start(TaskKind::Market,mailbox,[](auto){return BackgroundEvent{18,MarketRefreshResult{}};}),"finished slot reusable");tasks.shutdown();
         check(mailbox->take().size()==1,"new completion retained");mailbox->close();check(!mailbox->publish({}),"closed mailbox drops late replies");
     }
+    for(const auto kind:{TaskKind::Market,TaskKind::Dividends,TaskKind::Backtest,TaskKind::Backup}){
+        TaskGroup tasks;auto box=std::make_shared<CompletionMailbox>();std::promise<void> entered;
+        tasks.start(kind,box,[&](std::stop_token stop)->BackgroundEvent{entered.set_value();cancellable_wait(stop,10s);check_cancelled(stop);return {};});
+        entered.get_future().wait();box->close();tasks.shutdown();check(!tasks.running(kind)&&box->take().empty(),"each module stops without publishing to closed mailbox");
+        tasks.start(kind,box,[](auto)->BackgroundEvent{throw std::runtime_error("injected failure");});tasks.shutdown();check(!tasks.running(kind),"exception cannot leave module marked running");
+    }
     check(validate_quote_response("SECID;LAST;LASTCHANGEPRCNT;UPDATETIME;SYSTIME\nSBER;100;1;12:00;2026-10-16 12:00\n","SBER").last==100,"valid quote accepted");
     rejects<ValidationFailure>([]{validate_quote_response("SECID;LAST\nGAZP;100\n","SBER");});
     const std::string header="begin;open;high;low;close;volume\n";

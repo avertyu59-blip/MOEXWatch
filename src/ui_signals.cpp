@@ -8,7 +8,7 @@ void Application::save_signal_settings() {
 }
 
 void Application::load_signal_settings() {
-    try { auto loaded = signals_page.settings; storage::load_signal_settings(storage::data_directory(), loaded); signals_page.settings = std::move(loaded); }
+    try { auto loaded = signals_page.settings; storage::load_signal_settings(storage::data_directory(), loaded, !state.persistence.writes_blocked); signals_page.settings = std::move(loaded); }
     catch (const std::exception& ex) { storage_failure(ex.what()); }
 }
 

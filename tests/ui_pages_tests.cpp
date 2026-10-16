@@ -262,6 +262,16 @@ int main(){try{
         enter_cycle(1);enter_cycle(0);
         const auto second_cycle=cycles.open_position_for_ticker("SBER")->position_id;
         check(first_cycle!=second_cycle&&cycles.levels_for_position(second_cycle)==nullptr&&cycles.levels_for_position(first_cycle)!=nullptr,"same-day reopened position cannot inherit archived levels");
+        const auto selected_cycle=cycles.open_position_for_ticker("SBER")->position_id;
+        ListView_SetItemState(cycles.portfolio_page.positions,0,LVIS_SELECTED,LVIS_SELECTED);
+        ListView_SetItemState(cycles.portfolio_page.transactions_list,0,LVIS_SELECTED,LVIS_SELECTED);
+        const auto selected_operation=cycles.portfolio_page.operation_row_ids[*selected_row_data(cycles.portfolio_page.transactions_list)];
+        SetWindowTextW(cycles.portfolio_page.position_stop,L"91.50");
+        std::reverse(cycles.portfolio_page.transactions.begin(),cycles.portfolio_page.transactions.end());
+        cycles.portfolio_page.transactions_sort={6,false};cycles.fill_portfolio();
+        check(cycles.selected_portfolio_position()&&cycles.selected_portfolio_position()->position_id==selected_cycle,"position selection survives view refresh by UUID");
+        check(cycles.portfolio_page.operation_row_ids[*selected_row_data(cycles.portfolio_page.transactions_list)]==selected_operation,"operation selection survives reorder and refresh by UUID");
+        check(cycles.narrow(cycles.read_edit(cycles.portfolio_page.position_stop))=="91.50","quote refresh preserves unfinished level edit");
         wchar_t shown_id[64]{};ListView_GetItemText(cycles.portfolio_page.positions,0,11,shown_id,64);
         check(cycles.narrow(shown_id)==second_cycle,"position view displays current persistent ID");
     }

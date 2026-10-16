@@ -15,14 +15,14 @@ std::optional<CandleCache> load_candles(const std::filesystem::path& root, std::
 void save_candles(const std::filesystem::path& root, const CandleCache& cache);
 std::vector<Candle> merge_candles(const std::vector<Candle>& saved, const std::vector<Candle>& incoming, std::string_view from);
 void save_signal_settings(const std::filesystem::path& root, const SignalSettings& value);
-void load_signal_settings(const std::filesystem::path& root, SignalSettings& value);
+void load_signal_settings(const std::filesystem::path& root, SignalSettings& value, bool allow_migration = true);
 void save_trades(const std::filesystem::path& root, const std::vector<Trade>& value);
-void load_trades(const std::filesystem::path& root, std::vector<Trade>& value);
+void load_trades(const std::filesystem::path& root, std::vector<Trade>& value, bool allow_migration = true);
 // Legacy v1 I/O for migration; rejects writing persistent identities.
 void save_portfolio(const std::filesystem::path& root, const std::vector<PortfolioTransaction>& value);
 void load_portfolio(const std::filesystem::path& root, std::vector<PortfolioTransaction>& value);
 void save_position_levels(const std::filesystem::path& root, const std::vector<PositionLevels>& value);
 void load_position_levels(const std::filesystem::path& root, std::vector<PositionLevels>& value);
 void save_watchlist(const std::filesystem::path& root, const std::vector<Instrument>& value);
-void load_watchlist(const std::filesystem::path& root, std::vector<Instrument>& value);
+void load_watchlist(const std::filesystem::path& root, std::vector<Instrument>& value, bool allow_migration = true);
 }
