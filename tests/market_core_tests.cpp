@@ -1,5 +1,6 @@
 #include "market_core.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <iostream>
 #include <stdexcept>
@@ -44,6 +45,38 @@ int main() {
     check(long_analysis.sma200 && std::abs(*long_analysis.sma200 - 150.5) < 1e-9, "SMA200 history");
     check(!sma_series(long_history,200)[198] && sma_series(long_history,200)[199], "SMA200 warmup");
     check(long_analysis.volume_ratio20 && *long_analysis.volume_ratio20 == 1.0, "volume baseline excludes current bar");
+    std::vector<Candle> atr_fixture{
+        {"2026-01-01",10,12,8,10,100},
+        {"2026-01-02",10,14,9,11,100},
+        {"2026-01-03",11,13,10,12,100}};
+    const auto atr = atr_series(atr_fixture, 2);
+    check(!atr[0] && atr[1] && std::abs(*atr[1] - 4.5) < 1e-9, "ATR initial true-range average");
+    check(atr[2] && std::abs(*atr[2] - 3.75) < 1e-9, "ATR Wilder smoothing");
+    check(!atr_series(atr_fixture, 0).back() && !atr_series(atr_fixture, 4).back(), "ATR guards invalid and short periods");
+    std::vector<Candle> volume_fixture(21, {"2026-01-01",100,100,100,100,100});
+    volume_fixture.back().volume = 300;
+    const auto volume_ratio = volume_ratio_series(volume_fixture);
+    check(volume_ratio.back() && std::abs(*volume_ratio.back() - 3.0) < 1e-9,
+          "volume ratio compares current bar to prior 20 sessions");
+    const std::vector<Candle> comparison_stock{
+        {"2026-01-01 00:00:00",100,100,100,100,1},
+        {"2026-01-02 00:00:00",105,105,105,105,1},
+        {"2026-01-03 00:00:00",120,120,120,120,1}};
+    const std::vector<Candle> comparison_index{
+        {"2026-01-01 00:00:00",3000,3000,3000,3000,1},
+        {"2026-01-02 00:00:00",3300,3300,3300,3300,1},
+        {"2026-01-03 00:00:00",3300,3300,3300,3300,1}};
+    const auto comparison = normalized_comparison_series(comparison_stock, comparison_index, 1);
+    check(!comparison.stock[0] && comparison.stock[1] && comparison.benchmark[1] &&
+          *comparison.stock[1] == 100.0 && *comparison.benchmark[1] == 100.0,
+          "normalized comparison rebases both series at visible range start");
+    check(comparison.stock[2] && comparison.benchmark[2] &&
+          std::abs(*comparison.stock[2] - 100.0 * 120.0 / 105.0) < 1e-9 &&
+          *comparison.benchmark[2] == 100.0,
+          "normalized comparison aligns daily candles by date");
+    const auto unmatched = normalized_comparison_series(comparison_stock, {}, 0);
+    check(std::none_of(unmatched.stock.begin(), unmatched.stock.end(), [](const auto& v) { return v.has_value(); }),
+          "normalized comparison handles missing benchmark history");
     check(matches_filter(long_analysis,250.0,250.0,false,WatchFilter::NearTarget), "target filter");
     check(!matches_filter(long_analysis,250.0,250.0,true,WatchFilter::NearTarget), "stale quote excluded from filter");
     check(matches_filter(long_analysis,250.0,{},false,WatchFilter::AboveSma200), "above SMA200 filter");
@@ -68,6 +101,8 @@ int main() {
           "portfolio counts an open priced position");
     check(portfolio && portfolio->positions.size() == 1 && std::abs(portfolio->positions[0].quantity - 7.0) < 1e-9,
           "portfolio chronologically applies buys and partial sale");
+    check(portfolio && portfolio->positions[0].opened_on == "2026-02-01",
+          "open position identity starts on the first buy");
     check(portfolio && std::abs(portfolio->positions[0].average_entry_price - 260.6) < 1e-9,
           "weighted average cost includes buy commissions");
     check(portfolio && std::abs(portfolio->positions[0].unrealized_profit.value_or(0.0) - 65.8) < 1e-9,
@@ -81,6 +116,22 @@ int main() {
           "portfolio rejects sale before shares are owned");
     check(!valid_portfolio_transaction(PortfolioTransaction{"2026-02-30","SBER",PortfolioSide::Buy,1.0,100.0,0.0}),
           "portfolio validates calendar dates");
+    const PositionLevels configured_levels{"SBER","2026-02-01",240.0,340.0};
+    check(valid_position_levels(configured_levels), "position levels accept valid positive prices");
+    check(!valid_position_levels(PositionLevels{"SBER","2026-02-01",0.0,340.0}),
+          "position levels reject non-positive prices");
+    check(!valid_position_levels(PositionLevels{"SBER","2026-02-30",240.0,340.0}),
+          "position levels validate opening date");
+    const std::vector<PortfolioTransaction> position_lifecycle{
+        {"2026-03-01","SBER",PortfolioSide::Buy,2.0,100.0,0.0},
+        {"2026-03-03","SBER",PortfolioSide::Buy,1.0,110.0,0.0},
+        {"2026-03-04","SBER",PortfolioSide::Sell,1.0,120.0,0.0},
+        {"2026-03-05","SBER",PortfolioSide::Sell,2.0,120.0,0.0},
+        {"2026-03-06","SBER",PortfolioSide::Buy,4.0,130.0,0.0}};
+    const auto reopened = calculate_portfolio(position_lifecycle, {});
+    check(reopened && reopened->positions[0].quantity == 4.0 &&
+          reopened->positions[0].opened_on == "2026-03-06",
+          "full close and later buy starts a new position identity");
     const auto unpriced_portfolio = calculate_portfolio({{"2026-02-01","GAZP",PortfolioSide::Buy,2.0,100.0,1.0}},{});
     check(unpriced_portfolio && unpriced_portfolio->open_positions == 1 && unpriced_portfolio->priced_positions == 0 &&
           !unpriced_portfolio->positions[0].market_value,
@@ -154,5 +205,11 @@ int main() {
     check(overbought_signal.matched && overbought_signal.reasons.size() == 1, "overbought RSI condition");
     const auto quoted = parse_csv("A;B\n1;\"value; with \"\"quote\"\"\"\n");
     check(quoted.size() == 2 && quoted[1][1] == "value; with \"quote\"", "quoted CSV fields parsed");
+    const auto dividends = parse_dividends_csv(
+        "registryclosedate;value;currencyid\n2025-06-30;33.3;SUR\n2024-06-20;10;RUB\n2025-07-01;0;RUB\n");
+    check(dividends.size() == 2 && dividends[0].record_date == "2024-06-20" &&
+          dividends[0].amount_per_share == 10.0 && dividends[0].currency == "RUB" &&
+          dividends[1].record_date == "2025-06-30", "dividend CSV parsed and sorted");
+    check(parse_dividends_csv("wrong;header\na;b\n").empty(), "invalid dividend CSV rejected");
     std::cout << "market_core_tests: all checks passed\n";
 }

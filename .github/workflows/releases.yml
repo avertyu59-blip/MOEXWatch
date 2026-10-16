@@ -1,0 +1,82 @@
+name: Publish versioned Windows releases
+
+on:
+  push:
+    branches: ["main"]
+    tags: ["v[0-9]*"]
+    paths:
+      - "VERSION.txt"
+      - "CMakeLists.txt"
+      - "src/**"
+      - "include/**"
+      - "tests/**"
+      - ".github/workflows/releases.yml"
+      - ".github/scripts/publish-releases.ps1"
+      - ".github/release-history.json"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: moexwatch-releases
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      releases: ${{ steps.plan.outputs.releases }}
+      publish: ${{ steps.plan.outputs.publish }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Find versions without published releases
+        id: plan
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const version = fs.readFileSync('VERSION.txt', 'utf8').trim();
+            if (!/^\d+\.\d+\.\d+$/.test(version)) throw new Error('Invalid VERSION.txt');
+            const history = JSON.parse(fs.readFileSync('.github/release-history.json', 'utf8'));
+            for (const entry of history) {
+              if (!/^\d+\.\d+\.\d+$/.test(entry.version) || !/^[a-f0-9]{40}$/.test(entry.commit))
+                throw new Error('Invalid release history entry');
+            }
+            let candidates;
+            if (context.ref.startsWith('refs/tags/')) {
+              if (context.ref !== `refs/tags/v${version}`) throw new Error('Tag and VERSION.txt differ');
+              candidates = [{version, commit: context.sha, summary: 'Обновление MOEXWatch.'}];
+            } else {
+              candidates = [...history];
+              if (!candidates.some(entry => entry.version === version))
+                candidates.push({version, commit: context.sha, summary: 'Обновление MOEXWatch. Подробности — в README.'});
+            }
+            const published = await github.paginate(github.rest.repos.listReleases, {...context.repo, per_page: 100});
+            const pending = candidates.filter(entry => !published.some(release => release.tag_name === `v${entry.version}` && !release.draft));
+            pending.sort((a,b) => {
+              const av=a.version.split('.').map(Number), bv=b.version.split('.').map(Number);
+              return av[0]-bv[0] || av[1]-bv[1] || av[2]-bv[2];
+            });
+            core.setOutput('releases', JSON.stringify(pending));
+            core.setOutput('publish', String(pending.length > 0));
+            core.info(`Versions to publish: ${pending.map(entry => entry.version).join(', ') || 'none'}`);
+
+  publish:
+    needs: plan
+    if: needs.plan.outputs.publish == 'true'
+    runs-on: windows-2022
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Build, test, package and publish each missing version
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_PLAN: ${{ needs.plan.outputs.releases }}
+        run: ./.github/scripts/publish-releases.ps1
+

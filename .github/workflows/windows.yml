@@ -1,0 +1,59 @@
+name: Windows build and tests
+
+on:
+  push:
+    branches: ["main", "feature/**"]
+  pull_request:
+    branches: ["main"]
+
+jobs:
+  build:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S . -B build -G "Visual Studio 17 2022" -A x64 -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded
+      - name: Build
+        run: cmake --build build --config Release
+      - name: Test
+        run: ctest --test-dir build -C Release --output-on-failure
+      - name: Package verified Windows application
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $version = (Get-Content VERSION.txt -Raw).Trim()
+          New-Item -ItemType Directory -Path verified-package,verified-downloads | Out-Null
+          Copy-Item build/Release/moexwatch.exe verified-package/MOEXWatch.exe
+          Copy-Item README.md,VERSION.txt verified-package
+          Compress-Archive -Path verified-package/* -DestinationPath "verified-downloads/MOEXWatch-$version-Windows-x64.zip"
+          git archive --format=zip "--output=verified-downloads/MOEXWatch-$version-source.zip" HEAD
+          if ($LASTEXITCODE -ne 0) { throw 'Source packaging failed' }
+          Get-ChildItem verified-downloads/*.zip | ForEach-Object {
+            $hash = Get-FileHash $_.FullName -Algorithm SHA256
+            "$($hash.Hash.ToLowerInvariant())  $($_.Name)"
+          } | Set-Content "verified-downloads/MOEXWatch-$version-SHA256SUMS.txt" -Encoding utf8
+      - name: Retain verified packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: MOEXWatch-Windows-x64-${{ github.sha }}
+          path: verified-downloads/*
+          if-no-files-found: error
+          retention-days: 30
+
+  portable-calculations:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure calculations without UI or adapters
+        run: cmake -S . -B domain-build -DMOEX_DOMAIN_ONLY=ON -DCMAKE_BUILD_TYPE=Release
+      - name: Build calculations
+        run: cmake --build domain-build --parallel 2
+      - name: Test calculations
+        run: ctest --test-dir domain-build --output-on-failure
+
+      - name: Configure journal migration checks
+        run: cmake -S . -B migration-build -DCMAKE_BUILD_TYPE=Release
+      - name: Build journal migration tests
+        run: cmake --build migration-build --target portfolio_identity_tests io_runtime_tests storage_integration_tests storage_tests app_storage_tests --parallel 2
+      - name: Check journal identity and migration
+        run: ctest --test-dir migration-build -R "portfolio_identity_tests|io_runtime_tests|storage_integration_tests|storage_tests|app_storage_tests" --output-on-failure
