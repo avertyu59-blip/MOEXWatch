@@ -6,6 +6,7 @@
 #include <string>
 #include <atomic>
 #include "market_core.hpp"
+#include "async_tasks.hpp"
 
 namespace moexwatch::ui {
 struct BacktestState {
@@ -17,6 +18,6 @@ struct BacktestState {
     std::atomic<bool> busy{false};
     std::vector<HWND> controls;
 };
-struct BacktestUiResult { std::string text; bool failed{}; };
+using BacktestUiResult=BacktestResult;
 }
 #endif

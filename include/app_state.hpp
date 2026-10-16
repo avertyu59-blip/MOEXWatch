@@ -20,6 +20,8 @@ public:
     std::optional<std::uint64_t> begin_refresh();
     enum class ApplyResult { Ignored, Applied, RosterChanged };
     ApplyResult apply_refresh(std::uint64_t request, MarketRefreshResult result);
+    bool is_current(std::uint64_t request) const {return refreshing_&&request==request_;}
+    void cancel_refresh();
     bool refreshing() const { return refreshing_; }
     bool take_pending_refresh();
 };

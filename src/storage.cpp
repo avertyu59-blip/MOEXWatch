@@ -1,4 +1,5 @@
 #include "storage.hpp"
+#include "io_runtime.hpp"
 #include <algorithm>
 #include <atomic>
 #include <charconv>
@@ -267,7 +268,8 @@ void atomic_write(const std::filesystem::path& path,std::string_view content) {
     } catch(...) {std::error_code ignored;std::filesystem::remove(temporary,ignored);throw;}
 }
 
-std::filesystem::path create_backup(const std::filesystem::path& root) {
+std::filesystem::path create_backup(const std::filesystem::path& root,std::stop_token stop) {
+    check_cancelled(stop);
     std::lock_guard lock(io_mutex);
     const auto backup_root=root/"backups";
     std::filesystem::create_directories(backup_root);
@@ -292,6 +294,7 @@ std::filesystem::path create_backup(const std::filesystem::path& root) {
         std::ostringstream manifest;
         manifest<<"MOEXWatch backup 0.6.6\nЗакройте приложение перед восстановлением. Скопируйте файлы из этой папки в APPDATA/MOEXWatch.\nДля полной копии заменяйте набор файлов целиком. Если восстанавливаете старую копию без portfolio_journal_v2.csv, сначала перенесите текущий portfolio_journal_v2.csv в отдельную безопасную папку: иначе приложение продолжит читать его вместо старых файлов.\nКэш котировок не требуется для восстановления.\n\nfile;bytes\n";
         for(const auto& file:files) {
+            check_cancelled(stop);
             if(std::filesystem::is_symlink(file))throw std::runtime_error("Символические ссылки в резервную копию не включаются");
             const auto bytes=read_text(file);
             if(!bytes)throw std::runtime_error("Файл исчез во время резервного копирования");
@@ -299,6 +302,7 @@ std::filesystem::path create_backup(const std::filesystem::path& root) {
             if(read_text(partial/file.filename())!=bytes)throw std::runtime_error("Проверка резервной копии не пройдена");
             manifest<<file.filename().string()<<';'<<bytes->size()<<'\n';
         }
+        check_cancelled(stop);
         atomic_write(partial/"RESTORE.txt",manifest.str());
         std::filesystem::rename(partial,complete);
         return complete;

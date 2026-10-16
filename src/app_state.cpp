@@ -40,6 +40,7 @@ MarketState::ApplyResult MarketState::apply_refresh(std::uint64_t request,Market
     }
     return ApplyResult::Applied;
 }
+void MarketState::cancel_refresh(){refreshing_=false;pending_=false;++request_;}
 bool MarketState::take_pending_refresh() {const bool pending=pending_;pending_=false;return pending;}
 bool InstrumentSelection::choose(std::string_view value,const MarketState& market) {
     if(!market.index_of(value))return false;

@@ -14,24 +14,21 @@ void Application::refresh_data() {
     EnableWindow(GetDlgItem(shell.window, ID_REFRESH), FALSE);
     SetWindowTextW(charts_page.status, L"Загружаю акции и историю IMOEX из MOEX ISS…");
     const auto source = state.market.instruments;
-    const HWND target = shell.window;
-    std::thread([source, target, request=*request]() {
-        auto result = std::make_unique<MarketRefreshResult>();
-        PostMessageW(target, WM_FETCH_PROGRESS, 0, static_cast<LPARAM>(source.size()));
-        try { result->imoex_candles = fetch_index_candles(); }
-        catch (const std::exception& ex) { result->imoex_error = ex.what(); }
-        for (const auto& item : source) {
-            PostMessageW(target, WM_FETCH_PROGRESS, static_cast<WPARAM>(result->instruments.size() + 1), static_cast<LPARAM>(source.size()));
-            try { result->instruments.push_back(fetch_instrument(item)); }
-            catch (const std::exception& ex) {
-                Instrument failed = item;
-                failed.error = ex.what();
-                result->instruments.push_back(std::move(failed));
+    const auto completions=mailbox;
+    try {auto context=fetch_context(*request);tasks.start(TaskKind::Market,mailbox,[source,context,completions](std::stop_token stop) mutable -> BackgroundEvent {
+        context.stop=stop;MarketRefreshResult result;
+        try {
+            completions->publish({context.request,FetchProgress{0,source.size()}});
+            try{result.imoex_candles=fetch_index_candles(context);}catch(const Cancelled&){throw;}catch(const std::exception& ex){result.imoex_error=ex.what();}
+            for(const auto& item:source){
+                check_cancelled(stop);completions->publish({context.request,FetchProgress{result.instruments.size()+1,source.size()}});
+                result.instruments.push_back(fetch_instrument(item,context));
             }
-        }
-        auto* raw = result.release();
-        if (!PostMessageW(target, WM_DATA_READY, static_cast<WPARAM>(request), reinterpret_cast<LPARAM>(raw))) delete raw;
-    }).detach();
+            check_cancelled(stop);
+        }catch(const Cancelled&){result=MarketRefreshResult{};result.cancelled=true;}
+        return {context.request,std::move(result)};
+    });}catch(const std::exception&){state.market.cancel_refresh();EnableWindow(GetDlgItem(shell.window,ID_REFRESH),TRUE);SetWindowTextW(charts_page.status,L"Не удалось запустить загрузку.");}
+    update_task_controls();
 }
 
 void Application::refresh_market_views() {
@@ -39,6 +36,9 @@ void Application::refresh_market_views() {
     fill_list();fill_signals();fill_portfolio();notify_new_signals();
 }
 void Application::apply_market_refresh(std::uint64_t request,MarketRefreshResult result) {
+    if(!state.market.is_current(request))return;
+    if(result.cancelled){state.market.cancel_refresh();EnableWindow(GetDlgItem(shell.window,ID_REFRESH),TRUE);SetWindowTextW(charts_page.status,L"Загрузка отменена. Сохранены предыдущие данные.");update_task_controls();return;}
+    if(log)log->record(request,"market","apply_begin");
     const auto applied=state.market.apply_refresh(request,std::move(result));
     if(applied==MarketState::ApplyResult::Ignored)return;
     EnableWindow(GetDlgItem(shell.window,ID_REFRESH),TRUE);
@@ -49,6 +49,8 @@ void Application::apply_market_refresh(std::uint64_t request,MarketRefreshResult
     status += L"Подробности — в выбранной акции.";
     SetWindowTextW(charts_page.status, status.c_str());
     refresh_market_views();
+    if(log)log->record(request,"market","apply_ok");
+    update_task_controls();
     if(state.market.take_pending_refresh())refresh_data();
 }
 
@@ -70,14 +72,11 @@ void Application::start_backup() {
     // If loading failed, preserve the original files for recovery instead.
     if (!state.persistence.writes_blocked) { save_watchlist(); save_trades(); save_portfolio(); save_signal_settings(); }
     EnableWindow(shell.backup_button, FALSE);
-    const HWND target=shell.window;
-    std::thread([target] {
-        auto result=std::make_unique<BackupResult>();
-        try { result->path=storage::create_backup(storage::data_directory()); }
-        catch(const std::exception& ex) { result->error=ex.what(); }
-        auto* raw=result.release();
-        if(!PostMessageW(target,WM_BACKUP_READY,0,reinterpret_cast<LPARAM>(raw)))delete raw;
-    }).detach();
+    try {const auto root=storage::data_directory();
+    tasks.start(TaskKind::Backup,mailbox,[root](std::stop_token stop)->BackgroundEvent {
+        BackupResult result;try{result.path=storage::create_backup(root,stop);}catch(const Cancelled&){result.cancelled=true;}catch(const std::exception& ex){result.error=ex.what();}
+        return {0,std::move(result)};
+    });}catch(const std::exception& ex){EnableWindow(shell.backup_button,TRUE);MessageBoxW(shell.window,widen(ex.what()).c_str(),L"Резервная копия",MB_ICONERROR);}
 }
 
 void Application::create_controls(HWND window) {
@@ -87,6 +86,10 @@ void Application::create_controls(HWND window) {
                             16, 8, 400, 34, window, reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_TABS)), GetModuleHandleW(nullptr), nullptr);
     shell.backup_button=CreateWindowExW(0,L"BUTTON",L"Резервная копия",WS_CHILD|WS_VISIBLE|BS_PUSHBUTTON,
         1150,9,155,28,window,reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_BACKUP)),GetModuleHandleW(nullptr),nullptr);
+    shell.cancel_loading=CreateWindowExW(0,L"BUTTON",L"Отменить загрузки",WS_CHILD|WS_VISIBLE|BS_PUSHBUTTON,800,9,155,28,window,reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_CANCEL_LOADING)),GetModuleHandleW(nullptr),nullptr);
+    shell.diagnostics=CreateWindowExW(0,L"BUTTON",L"Журнал ошибок",WS_CHILD|WS_VISIBLE|BS_PUSHBUTTON,965,9,140,28,window,reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_DIAGNOSTICS)),GetModuleHandleW(nullptr),nullptr);
+    for(const auto h:{shell.cancel_loading,shell.diagnostics}){if(shell.font)SendMessageW(h,WM_SETFONT,reinterpret_cast<WPARAM>(shell.font),TRUE);shell.global_controls.push_back(h);}
+    EnableWindow(shell.cancel_loading,FALSE);
     if(shell.font)SendMessageW(shell.backup_button,WM_SETFONT,reinterpret_cast<WPARAM>(shell.font),TRUE);
     TCITEMW tab{}; tab.mask = TCIF_TEXT;
     tab.pszText = const_cast<wchar_t*>(L"Аналитика"); TabCtrl_InsertItem(shell.tabs, 0, &tab);
@@ -105,6 +108,7 @@ void Application::create_controls(HWND window) {
     create_backtest_controls(window);
     create_observation_controls(window);
     activate_page(0);
+    SetTimer(window,TIMER_TASKS,50,nullptr);
 }
 
 LRESULT CALLBACK Application::handle_window_message(HWND window, UINT message, WPARAM wparam, LPARAM lparam) {
@@ -122,7 +126,9 @@ LRESULT CALLBACK Application::handle_window_message(HWND window, UINT message, W
     case WM_SIZE: {
         const int width = LOWORD(lparam), height = HIWORD(lparam);
         if(signals_page.observation_page)MoveWindow(signals_page.observation_page,16,100,width-32,height-116,TRUE);
-        if (shell.tabs) MoveWindow(shell.tabs, 16, 8, width - 195, 34, TRUE);
+        if (shell.tabs) MoveWindow(shell.tabs,16,8,std::max(400,width-526),34,TRUE);
+        if(shell.cancel_loading)MoveWindow(shell.cancel_loading,width-496,9,155,28,TRUE);
+        if(shell.diagnostics)MoveWindow(shell.diagnostics,width-331,9,140,28,TRUE);
         if(shell.backup_button)MoveWindow(shell.backup_button, width-171, 9, 155, 28, TRUE);
         resize_charts(width, height);
         resize_trades(width, height);
@@ -140,6 +146,8 @@ LRESULT CALLBACK Application::handle_window_message(HWND window, UINT message, W
     case WM_COMMAND:
         if(command_charts(wparam)||command_backtest(wparam)||command_signals(wparam)||command_portfolio(wparam)||command_trades(wparam))return 0;
         switch (LOWORD(wparam)) {
+        case ID_CANCEL_LOADING: cancel_loading(); return 0;
+        case ID_DIAGNOSTICS: open_diagnostics(); return 0;
         case ID_REFRESH: refresh_data(); return 0;
         case ID_BACKUP: start_backup(); return 0;
         }
@@ -168,6 +176,7 @@ LRESULT CALLBACK Application::handle_window_message(HWND window, UINT message, W
         SetWindowTextW(charts_page.status, status.c_str()); return 0;
     }
     case WM_TIMER:
+        if(wparam==TIMER_TASKS){drain_completions();return 0;}
         if (wparam == TIMER_AUTO_REFRESH && signals_page.settings.auto_refresh_enabled) { refresh_data(); return 0; }
         break;
     case WM_DATA_READY: {
@@ -178,6 +187,7 @@ LRESULT CALLBACK Application::handle_window_message(HWND window, UINT message, W
     case WM_BACKUP_READY: {
         std::unique_ptr<BackupResult> result(reinterpret_cast<BackupResult*>(lparam));
         EnableWindow(shell.backup_button,TRUE);
+        if(result->cancelled)return 0;
         if(!result->error.empty())MessageBoxW(window,widen("Резервная копия не создана: "+result->error).c_str(),L"MOEXWatch",MB_ICONERROR);
         else {
             MessageBoxW(window,(L"Копия создана и проверена:\n"+result->path.wstring()+
@@ -202,7 +212,11 @@ LRESULT CALLBACK Application::handle_window_message(HWND window, UINT message, W
         }
         EndPaint(window, &ps); return 0;
     }
+    case WM_CLOSE:
+        shutdown_tasks();DestroyWindow(window);return 0;
     case WM_DESTROY:
+        shutdown_tasks();
+        KillTimer(window,TIMER_TASKS);
         KillTimer(window, TIMER_AUTO_REFRESH);
         save_watchlist(); save_trades(); save_portfolio(); save_signal_settings();
         if (signals_page.notification_icon_ready) Shell_NotifyIconW(NIM_DELETE, &signals_page.notification_icon);

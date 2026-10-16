@@ -1,6 +1,7 @@
 #pragma once
 #ifdef _WIN32
 #include "app_state.hpp"
+#include "async_tasks.hpp"
 #include "ui_shell_state.hpp"
 #include "ui_dividends.hpp"
 #include "ui_trades.hpp"
@@ -46,6 +47,8 @@ constexpr UINT WM_FETCH_PROGRESS = WM_APP + 11;
 constexpr UINT WM_BACKTEST_READY = WM_APP + 12;
 constexpr UINT WM_DIVIDENDS_READY = WM_APP + 13;
 constexpr UINT WM_BACKUP_READY = WM_APP + 14;
+constexpr int ID_CANCEL_LOADING=1064, ID_DIAGNOSTICS=1065;
+constexpr UINT_PTR TIMER_TASKS=2;
 constexpr int ID_RESOLVE_LEVELS = 1063;
 constexpr int ID_BACKUP = 1060, ID_PORT_IMPORT = 1061, ID_PORT_EXPORT = 1062;
 constexpr int ID_TICKER = 1001, ID_TARGET = 1002, ID_ADD = 1003, ID_TARGET_SET = 1004,
@@ -69,11 +72,22 @@ constexpr int ID_DIVIDENDS_OPEN = 1054, ID_DIVIDENDS_LIST = 1055, ID_DIVIDENDS_R
 constexpr int ID_CHART_TABS = 1057, ID_DIV_CHART_TABS = 1058, ID_DIV_CHART_RANGE = 1059;
 constexpr UINT_PTR TIMER_AUTO_REFRESH = 1;
 
-struct BackupResult { std::filesystem::path path; std::string error; };
+
 // UI-thread owner. Pages share market/model data through this explicit owner.
 // Each page keeps its own controls and transient UI state in the structs above.
 class Application {
 public:
+    TaskGroup tasks;
+    std::shared_ptr<CompletionMailbox> mailbox=std::make_shared<CompletionMailbox>();
+    std::shared_ptr<DiagnosticLog> log;
+    ~Application();
+    FetchContext fetch_context(std::uint64_t request);
+    void cancel_loading();
+    void shutdown_tasks();
+    void drain_completions();
+    void update_task_controls();
+    void apply_dividend_response(std::uint64_t request,DividendFetchResult result);
+    void open_diagnostics();
     BacktestState backtest_page;
     SignalsState signals_page;
     PortfolioState portfolio_page;

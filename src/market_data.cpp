@@ -1,5 +1,6 @@
 #include "market_data.hpp"
 #include "storage.hpp"
+#include "market_validation.hpp"
 #ifdef _WIN32
 #include <windows.h>
 #include <winhttp.h>
@@ -21,48 +22,16 @@ std::wstring widen(std::string_view text) {
 }
 
 }
-struct InternetHandle {
-    HINTERNET value{};
-    ~InternetHandle() { if (value) WinHttpCloseHandle(value); }
-    InternetHandle(const InternetHandle&) = delete;
-    InternetHandle& operator=(const InternetHandle&) = delete;
-    explicit InternetHandle(HINTERNET h = nullptr) : value(h) {}
-};
-
-std::runtime_error network_error(const char* message) {
-    const DWORD code = GetLastError();
-    return std::runtime_error(std::string(message) + " (WinHTTP/Windows " + std::to_string(code) + ")");
+std::string https_get(FetchContext& context,const std::wstring& path,const wchar_t* host=L"iss.moex.com") {
+    check_cancelled(context.stop);
+    const std::string hostname(host,host+std::char_traits<wchar_t>::length(host));
+    const std::string endpoint(path.begin(),path.end());
+    const std::string source=hostname=="iss.moex.com"?"moex":hostname=="smart-lab.ru"?"smartlab":"issuer";
+    return get_with_retry({hostname,endpoint,source},context.transport,context.stop,context.log.get(),context.request).body;
 }
-
-std::string https_get(const std::wstring& path, const wchar_t* host = L"iss.moex.com") {
-    InternetHandle session(WinHttpOpen(L"MOEXWatch/0.6.6", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
-                                       WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0));
-    if (!session.value) throw network_error("Не удалось открыть HTTPS-сессию");
-    WinHttpSetTimeouts(session.value, 5000, 5000, 6000, 6000);
-    InternetHandle connection(WinHttpConnect(session.value, host, INTERNET_DEFAULT_HTTPS_PORT, 0));
-    if (!connection.value) throw network_error("Не удалось подключиться к источнику");
-    InternetHandle request(WinHttpOpenRequest(connection.value, L"GET", path.c_str(), nullptr,
-                                               WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE));
-    if (!request.value) throw network_error("Не удалось создать HTTPS-запрос");
-    if (!WinHttpSendRequest(request.value, WINHTTP_NO_ADDITIONAL_HEADERS, 0, WINHTTP_NO_REQUEST_DATA, 0, 0, 0) ||
-        !WinHttpReceiveResponse(request.value, nullptr)) throw network_error("Ошибка HTTPS-запроса");
-    DWORD status = 0, size = sizeof(status);
-    if (!WinHttpQueryHeaders(request.value, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
-                             WINHTTP_HEADER_NAME_BY_INDEX, &status, &size, WINHTTP_NO_HEADER_INDEX) || status < 200 || status >= 300)
-        throw std::runtime_error("Источник ответил HTTP " + std::to_string(status));
-    std::string body;
-    for (;;) {
-        DWORD available = 0;
-        if (!WinHttpQueryDataAvailable(request.value, &available)) throw std::runtime_error("Ошибка чтения HTTPS-ответа");
-        if (available == 0) break;
-        if (body.size() + available > 2U * 1024U * 1024U) throw std::runtime_error("Ответ источника превышает 2 МБ");
-        const auto old_size = body.size();
-        body.resize(old_size + available);
-        DWORD received = 0;
-        if (!WinHttpReadData(request.value, body.data() + old_size, available, &received)) throw std::runtime_error("Ошибка чтения HTTPS-ответа");
-        body.resize(old_size + received);
-    }
-    return body;
+void checked_stage(FetchContext& context,std::string_view source,bool accepted) {
+    check_cancelled(context.stop);
+    if(context.log)context.log->record(context.request,source,accepted?"validation_ok":"validation_failed");
 }
 
 std::string date_from() {
@@ -102,22 +71,22 @@ void save_dividend_cache(const Instrument& item) {
         serialize_dividend_snapshot({item.ticker,item.dividends_checked_at,item.dividends}));
 }
 
-void fetch_dividend_events(DividendFetchResult& result) {
+void fetch_dividend_events(DividendFetchResult& result,FetchContext& context) {
     const auto ticker = result.ticker;
     const std::string history_url = "https://smart-lab.ru/q/" + ticker + "/dividend/";
     std::vector<DividendEvent> history, upcoming;
     // Either page failing is a partial refresh, never a successful empty calendar.
     // Keep the last complete snapshot instead of erasing cancelled/withdrawn events.
-    history = parse_smartlab_dividends(https_get(L"/q/" + widen(ticker) + L"/dividend/", L"smart-lab.ru"), ticker, history_url);
-    upcoming = parse_smartlab_dividends(https_get(L"/dividends/", L"smart-lab.ru"), ticker, "https://smart-lab.ru/dividends/");
+    history = parse_smartlab_dividends(https_get(context,L"/q/" + widen(ticker) + L"/dividend/", L"smart-lab.ru"), ticker, history_url);
+    upcoming = parse_smartlab_dividends(https_get(context,L"/dividends/", L"smart-lab.ru"), ticker, "https://smart-lab.ru/dividends/");
     merge_dividends(history, upcoming);
     if (ticker == "LKOH") {
         const std::string issuer = "https://lukoil.ru/InvestorAndShareholderCenter/Securities/Dividends";
         try {
-            const auto official = parse_lukoil_dividends(https_get(L"/InvestorAndShareholderCenter/Securities/Dividends", L"lukoil.ru"));
+            const auto official = parse_lukoil_dividends(https_get(context,L"/InvestorAndShareholderCenter/Securities/Dividends", L"lukoil.ru"));
             reconcile_dividends(history, official, issuer, result.checked_at);
             result.note = "Сверка: официальная таблица ЛУКОЙЛ (совпадение даты и суммы).";
-        } catch (const std::exception&) {
+        } catch (const Cancelled&) {throw;} catch (const std::exception&) {
             result.note = "Сайт эмитента недоступен либо изменён; сверка не выполнена.";
             for (auto& e : history) { e.issuer_url = issuer; e.issuer_checked_at = result.checked_at; e.verification = DividendVerification::Unavailable; }
         }
@@ -132,13 +101,14 @@ void fetch_dividend_events(DividendFetchResult& result) {
                 e.last_buy_basis += "; отличается от даты календаря источника";
         }
     }
+    checked_stage(context,"dividends",true);
     result.events = std::move(history);
 }
 
 namespace {
-std::vector<Candle> fetch_candle_history(const std::wstring& base, std::string_view ticker) {
+std::vector<Candle> fetch_candle_history(const std::wstring& base, std::string_view ticker,FetchContext& context) {
     std::vector<Candle> saved;
-    try { if(const auto cache=storage::load_candles(storage::data_directory(),ticker)) saved=cache->candles; }
+    try { if(const auto cache=storage::load_candles(context.cache_root,ticker)) saved=cache->candles; }
     catch(const std::exception&) { /* A broken cache is disposable; a complete download replaces it. */ }
     const auto window=date_from();
     std::string from=window;
@@ -148,14 +118,10 @@ std::vector<Candle> fetch_candle_history(const std::wstring& base, std::string_v
     for(std::size_t page=0;page<16;++page) {
         const auto path=base+L"/candles.csv?from="+widen(from)+
             L"&interval=24&iss.meta=on&iss.only=candles&candles.columns=begin,open,high,low,close,volume&iss.delimiter=%3B&iss.dp=point&lang=en&start="+std::to_wstring(incoming.size());
-        const auto csv=https_get(path);
-        if(!has_candle_header(csv))throw std::runtime_error("MOEX: формат страницы истории не распознан");
-        auto batch=parse_candles_csv(csv);
-        // Do not turn a page full of malformed data into the successful end of history.
-        const auto rows=parse_csv(csv);
-        const auto header=std::find_if(rows.begin(),rows.end(),[](const auto& r){return !r.empty() && r[0]=="begin";});
-        if(header==rows.end() || static_cast<std::size_t>(std::distance(header,rows.end())-1)!=batch.size())
-            throw std::runtime_error("MOEX: история содержит неполные или некорректные строки");
+        const auto csv=https_get(context,path);
+        std::vector<Candle> batch;
+        try{batch=validate_candle_page(csv);checked_stage(context,"candles",true);}
+        catch(const Cancelled&){throw;}catch(...){checked_stage(context,"candles",false);throw;}
         if(batch.empty()){complete=true;break;}
         if(!incoming.empty() && batch.front().date.substr(0,10)<=incoming.back().date.substr(0,10))throw std::runtime_error("MOEX повторил страницу истории");
         incoming.insert(incoming.end(),batch.begin(),batch.end());
@@ -165,7 +131,8 @@ std::vector<Candle> fetch_candle_history(const std::wstring& base, std::string_v
     if(incoming.empty())throw std::runtime_error("MOEX не вернул дневные свечи; сохранённая история не подтверждена");
     auto result=storage::merge_candles(saved,incoming,window);
     if(result.empty())throw std::runtime_error("MOEX не вернул историю за выбранный период");
-    storage::save_candles(storage::data_directory(),{std::string(ticker),local_timestamp(),result});
+    check_cancelled(context.stop);
+    storage::save_candles(context.cache_root,{std::string(ticker),local_timestamp(),result});
     return result;
 }
 }
@@ -181,28 +148,28 @@ void load_market_cache(std::vector<Instrument>& items,std::vector<Candle>& index
     catch(const std::exception& ex){index_error=std::string("Кэш IMOEX: ")+ex.what();}
 }
 
-Instrument fetch_instrument(const Instrument& previous) {
+Instrument fetch_instrument(const Instrument& previous,FetchContext& context) {
     Instrument item=previous;item.error.clear();item.quote_stale=true;item.candles_stale=true;
     if(item.candles.empty())try {
-        if(const auto cache=storage::load_candles(storage::data_directory(),item.ticker)) {
+        if(const auto cache=storage::load_candles(context.cache_root,item.ticker)) {
             item.candles=storage::merge_candles(cache->candles,{},date_from());item.candles_checked_at=cache->checked_at;
         }
     } catch(const std::exception&) {}
     const std::wstring base=L"/iss/engines/stock/markets/shares/boards/TQBR/securities/"+widen(item.ticker);
     try {
-        const auto csv=https_get(base+L".csv?iss.meta=on&iss.only=marketdata&marketdata.columns=SECID,LAST,LASTCHANGEPRCNT,UPDATETIME,SYSTIME&iss.delimiter=%3B&iss.dp=point&lang=en");
-        const auto quote=parse_quote_csv(csv,item.ticker);
-        if(quote){item.quote=*quote;item.quote_stale=!quote->last.has_value();}
-        else item.error="Котировки: формат CSV не распознан";
-        if(quote&&!quote->last)item.error="MOEX не вернул цену последней сделки";
-    } catch(const std::exception& ex){item.error=std::string("Котировки: ")+ex.what();}
-    try {item.candles=fetch_candle_history(base,item.ticker);item.candles_stale=false;item.candles_checked_at=local_timestamp();}
-    catch(const std::exception& ex){if(!item.error.empty())item.error+="; ";item.error+=std::string("График: ")+ex.what();}
+        const auto csv=https_get(context,base+L".csv?iss.meta=on&iss.only=marketdata&marketdata.columns=SECID,LAST,LASTCHANGEPRCNT,UPDATETIME,SYSTIME&iss.delimiter=%3B&iss.dp=point&lang=en");
+        const auto quote=validate_quote_response(csv,item.ticker);checked_stage(context,"quote",true);
+        item.quote=quote;item.quote_stale=!quote.last.has_value();
+        if(!quote.last)item.error="MOEX не вернул цену последней сделки";
+    } catch(const Cancelled&){throw;}catch(const std::exception& ex){checked_stage(context,"quote",false);item.error=std::string("Котировки: ")+ex.what();}
+    try {item.candles=fetch_candle_history(base,item.ticker,context);item.candles_stale=false;item.candles_checked_at=local_timestamp();}
+    catch(const Cancelled&){throw;}catch(const std::exception& ex){if(!item.error.empty())item.error+="; ";item.error+=std::string("График: ")+ex.what();}
+    check_cancelled(context.stop);
     return item;
 }
 
-std::vector<Candle> fetch_index_candles() {
-    return fetch_candle_history(L"/iss/engines/stock/markets/index/boards/SNDX/securities/IMOEX","IMOEX");
+std::vector<Candle> fetch_index_candles(FetchContext& context) {
+    return fetch_candle_history(L"/iss/engines/stock/markets/index/boards/SNDX/securities/IMOEX","IMOEX",context);
 }
 }
 #endif

@@ -7,6 +7,9 @@ struct ShellState {
     HWND window{};
     HWND backup_button{};
     HWND tabs{};
+    HWND cancel_loading{};
+    HWND diagnostics{};
+    bool closing{};
     HFONT font{};
     int active_page{};
     std::vector<HWND> global_controls;

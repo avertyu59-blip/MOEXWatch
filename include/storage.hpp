@@ -2,13 +2,14 @@
 #include "app_models.hpp"
 #include "portfolio_identity.hpp"
 #include <filesystem>
+#include <stop_token>
 namespace moexwatch::storage {
 std::filesystem::path data_directory();
 PortfolioJournal load_portfolio_journal(const std::filesystem::path& root, bool allow_migration = true);
 void save_portfolio_journal(const std::filesystem::path& root,const PortfolioJournal& journal);
 std::optional<std::string> read_text(const std::filesystem::path& path, std::size_t limit = 4U*1024U*1024U);
 void atomic_write(const std::filesystem::path& path, std::string_view content);
-std::filesystem::path create_backup(const std::filesystem::path& root);
+std::filesystem::path create_backup(const std::filesystem::path& root,std::stop_token stop = {});
 struct CandleCache { std::string ticker; std::string checked_at; std::vector<Candle> candles; };
 std::optional<CandleCache> load_candles(const std::filesystem::path& root, std::string_view ticker);
 void save_candles(const std::filesystem::path& root, const CandleCache& cache);

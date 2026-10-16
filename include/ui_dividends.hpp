@@ -19,6 +19,7 @@ struct DividendsState {
     int chart_sessions{66};
     TableSort sort{-1,true};
     bool updating{};
+    bool pending_refresh{};
 };
 }
 #endif

@@ -3,6 +3,7 @@
 #include <stdexcept>
 #include <set>
 #include <cstdint>
+#include <future>
 using namespace moexwatch;
 using namespace moexwatch::ui;
 namespace {
@@ -212,6 +213,15 @@ int main(){try{
     auto valid=std::make_unique<MarketRefreshResult>();auto valid_item=app.state.market.instruments[0];valid_item.quote.last=191;valid->instruments.push_back(valid_item);
     app.handle_window_message(app.shell.window,WM_DATA_READY,static_cast<WPARAM>(*newer_request),reinterpret_cast<LPARAM>(valid.release()));
     check(!app.state.market.refreshing()&&IsWindowEnabled(GetDlgItem(app.shell.window,ID_REFRESH))&&app.state.market.instruments[0].quote.last==191,"only current request can apply and unlock refresh");
+    // An already queued response is discarded when cancellation wins before UI application.
+    const auto cancel_request=app.state.market.begin_refresh();
+    std::promise<void> queued;const auto cancel_item=app.state.market.instruments[0];
+    app.tasks.start(TaskKind::Market,app.mailbox,[&](std::stop_token)->BackgroundEvent {auto data=MarketRefreshResult{};auto item=cancel_item;item.quote.last=1;data.instruments.push_back(item);queued.set_value();return {*cancel_request,std::move(data)};});
+    queued.get_future().wait();app.tasks.shutdown();app.cancel_loading();app.drain_completions();
+    check(!app.state.market.refreshing()&&app.state.market.instruments[0].quote.last==191,"cancelled queued result cannot replace current quote");
+    app.handle_window_message(app.shell.window,WM_SIZE,0,MAKELPARAM(1164,720));
+    const auto tabs_rect=relative(app.shell.tabs,app.shell.window),cancel_rect=relative(app.shell.cancel_loading,app.shell.window),log_rect=relative(app.shell.diagnostics,app.shell.window),backup_rect=relative(app.shell.backup_button,app.shell.window);
+    check(tabs_rect.right<=cancel_rect.left&&cancel_rect.right<=log_rect.left&&log_rect.right<=backup_rect.left,"global actions do not overlap at minimum width");
     // Real Win32 views consume domain results; no provider requests or account writes.
     app.trades_page.records={{"SBER",10,100,120,10,13},{"SBER",5,120,100,5,13}};
     app.fill_trades();
@@ -269,7 +279,13 @@ int main(){try{
     NMHDR page_change{};page_change.hwndFrom=first_owner.shell.tabs;page_change.idFrom=ID_TABS;page_change.code=TCN_SELCHANGE;
     SendMessageW(first_owner.shell.window,WM_NOTIFY,ID_TABS,reinterpret_cast<LPARAM>(&page_change));
     check(first_owner.shell.active_page==1&&second_owner.shell.active_page==4,"native routing cannot change another application owner");
-    DestroyWindow(first_owner.shell.window);DestroyWindow(second_owner.shell.window);
+    std::promise<void> loading;std::atomic<bool> stopped{};
+    first_owner.tasks.start(TaskKind::Market,first_owner.mailbox,[&](std::stop_token stop)->BackgroundEvent{loading.set_value();cancellable_wait(stop,std::chrono::seconds(10));stopped=true;check_cancelled(stop);return {};});
+    loading.get_future().wait();const auto closing=std::chrono::steady_clock::now();
+    SendMessageW(first_owner.shell.window,WM_CLOSE,0,0);
+    check(stopped&&!first_owner.tasks.running(TaskKind::Market)&&std::chrono::steady_clock::now()-closing<std::chrono::seconds(2),"WM_CLOSE cancels and joins loading before destroying owner");
+    check(first_owner.mailbox->take().empty()&&!first_owner.mailbox->publish({}),"closed window cannot receive late completions");
+    DestroyWindow(second_owner.shell.window);
     check(GetPropW(first_owner.shell.window,L"MOEXWatch.Owner")==nullptr,"destroyed window releases owner binding");
     const auto no_owner=CreateWindowExW(0,wc.lpszClassName,L"invalid",WS_OVERLAPPEDWINDOW,0,0,1180,760,nullptr,nullptr,wc.hInstance,nullptr);
     check(no_owner==nullptr,"router rejects creation without an owner");

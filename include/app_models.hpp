@@ -18,6 +18,7 @@ struct Instrument {
 };
 
 struct DividendFetchResult {
+    bool cancelled{};
     std::string ticker;
     std::vector<DividendEvent> events;
     std::string error;
@@ -26,6 +27,7 @@ struct DividendFetchResult {
 };
 
 struct MarketRefreshResult {
+    bool cancelled{};
     std::vector<Instrument> instruments;
     std::vector<Candle> imoex_candles;
     std::string imoex_error;

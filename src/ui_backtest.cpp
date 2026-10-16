@@ -29,11 +29,12 @@ void Application::start_backtest() {
     const auto target = item.target;
     const auto capital_value = *capital;
     const auto commission_value = *commission;
-    const HWND target_window = shell.window;
-    std::thread([item, settings, target, capital_value, commission_value, target_window]() {
+    try {auto context=fetch_context(0);
+    tasks.start(TaskKind::Backtest,mailbox,[item,settings,target,capital_value,commission_value,context](std::stop_token stop) mutable -> BackgroundEvent {
+        context.stop=stop;
         auto result = std::make_unique<BacktestUiResult>();
         try {
-            const auto index = fetch_index_candles();
+            const auto index = fetch_index_candles(context);
             const auto summary = run_backtest(item.candles, index, settings, target, capital_value, commission_value);
             if (!summary) throw std::runtime_error("Недостаточно общих торговых дат или заданы неверные параметры.");
             std::ostringstream out;
@@ -43,14 +44,16 @@ void Application::start_backtest() {
                 << "Стратегия: " << format_price(summary->strategy_final_value) << " ₽  |  доходность " << summary->strategy_return_percent << "%  |  закрытых сделок: " << summary->completed_trades << "  |  макс. просадка: " << summary->strategy_max_drawdown_percent << "%\r\n"
                 << "IMOEX:     " << format_price(summary->benchmark_final_value) << " ₽  |  доходность " << summary->benchmark_return_percent << "%\r\n\r\n"
                 << "Комиссия " << commission_value << "% учтена при каждой покупке и продаже. Для обоих вариантов показана оценка после комиссии. Сигнал на закрытии исполняется по открытию следующей общей сессии.";
+            check_cancelled(stop);
             result->text = out.str();
-        } catch (const std::exception& ex) {
+        } catch (const Cancelled&) {result->cancelled=true;result->text="Тест отменён.";} catch (const std::exception& ex) {
             result->failed = true;
             result->text = std::string("Не удалось выполнить тест: ") + ex.what();
         }
-        auto* raw = result.release();
-        if (!PostMessageW(target_window, WM_BACKTEST_READY, 0, reinterpret_cast<LPARAM>(raw))) delete raw;
-    }).detach();
+        return {0,std::move(*result)};
+    });
+    }catch(const std::exception&){backtest_page.busy=false;EnableWindow(backtest_page.run,TRUE);SetWindowTextW(backtest_page.result,L"Не удалось запустить тест.");}
+    update_task_controls();
 }
 
 void Application::create_backtest_controls(HWND window) {
@@ -95,6 +98,7 @@ void Application::complete_backtest(LPARAM lparam) {
         std::unique_ptr<BacktestUiResult> result(reinterpret_cast<BacktestUiResult*>(lparam));
         backtest_page.busy = false;
         EnableWindow(backtest_page.run, TRUE);
+    update_task_controls();
         const auto display = widen(result->text);
         SetWindowTextW(backtest_page.result, display.c_str());
 }

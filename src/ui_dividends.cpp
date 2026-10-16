@@ -54,18 +54,46 @@ void Application::refresh_dividend_events() {
     if (!dividends_page.window || dividend_instrument_index() >= state.market.instruments.size()) return;
     const std::string ticker = state.market.instruments[dividend_instrument_index()].ticker;
     if (dividends_page.info) SetWindowTextW(dividends_page.info, L"Загружаю открытый календарь дивидендов…");
-    const HWND target = shell.window;
-    const auto request = ++dividends_page.request;
-    EnableWindow(dividends_page.refresh, FALSE);
-    std::thread([target, ticker, request]() {
-        auto result = std::make_unique<DividendFetchResult>();
-        result->ticker = ticker;
-        result->checked_at = local_timestamp();
-        try { fetch_dividend_events(*result); }
-        catch (const std::exception& ex) { result->error = ex.what(); }
-        auto* raw = result.release();
-        if (!PostMessageW(target, WM_DIVIDENDS_READY, request, reinterpret_cast<LPARAM>(raw))) delete raw;
-    }).detach();
+    tasks.cancel(TaskKind::Dividends);
+    // A second selection may supersede a request; reap the cancelled worker before reuse.
+    // Transport cancellation is independent of the UI message loop.
+    if(tasks.running(TaskKind::Dividends)) {dividends_page.pending_refresh=true;return;}
+    try {const auto request=++dividends_page.request;auto context=fetch_context(request);
+    EnableWindow(dividends_page.refresh,FALSE);
+    tasks.start(TaskKind::Dividends,mailbox,[ticker,context](std::stop_token stop) mutable -> BackgroundEvent {
+        context.stop=stop;DividendFetchResult result;result.ticker=ticker;result.checked_at=local_timestamp();
+        try{fetch_dividend_events(result,context);check_cancelled(stop);}
+        catch(const Cancelled&){result.cancelled=true;}
+        catch(const std::exception& ex){result.error=ex.what();if(context.log)context.log->record(context.request,"dividends","validation_or_fetch_failed");}
+        return {context.request,std::move(result)};
+    });}catch(const std::exception&){EnableWindow(dividends_page.refresh,TRUE);SetWindowTextW(dividends_page.info,L"Не удалось запустить загрузку событий.");}
+    update_task_controls();
+}
+
+void Application::apply_dividend_response(std::uint64_t request,DividendFetchResult result) {
+    if(dividends_page.pending_refresh){dividends_page.pending_refresh=false;if(dividends_page.window)refresh_dividend_events();return;}
+    if(!dividends_page.window||request!=dividends_page.request)return;
+    if(result.cancelled){EnableWindow(dividends_page.refresh,TRUE);SetWindowTextW(dividends_page.info,L"Загрузка отменена. Сохранены прежние события.");update_task_controls();return;}
+        EnableWindow(dividends_page.refresh, TRUE);
+        const auto it = std::find_if(state.market.instruments.begin(), state.market.instruments.end(), [&](const auto& item) { return item.ticker == result.ticker; });
+        const bool is_current = it != state.market.instruments.end() && dividend_instrument_index() < state.market.instruments.size() &&
+            state.market.instruments[dividend_instrument_index()].ticker == result.ticker;
+        if (it != state.market.instruments.end()) {
+            it->dividend_error = std::move(result.error);
+            if (it->dividend_error.empty()) {
+                it->dividends = std::move(result.events);
+                it->dividends_stale = false;
+                it->dividends_checked_at = std::move(result.checked_at);
+                it->dividend_note = std::move(result.note);
+                try { save_dividend_cache(*it); }
+                catch (const std::exception& ex) { it->dividend_note += " | " + std::string(ex.what()); }
+            } else it->dividends_stale = true;
+            if (is_current) {
+                fill_dividend_list();
+                InvalidateRect(dividends_page.window, nullptr, TRUE);
+            }
+        }
+    update_task_controls();
 }
 
 void Application::open_dividends_window() {
@@ -174,26 +202,7 @@ LRESULT CALLBACK Application::handle_dividends_message(HWND window, UINT message
     }
     case WM_DIVIDENDS_READY: {
         std::unique_ptr<DividendFetchResult> result(reinterpret_cast<DividendFetchResult*>(lparam));
-        if (wparam != dividends_page.request) return 0;
-        EnableWindow(dividends_page.refresh, TRUE);
-        const auto it = std::find_if(state.market.instruments.begin(), state.market.instruments.end(), [&](const auto& item) { return item.ticker == result->ticker; });
-        const bool is_current = it != state.market.instruments.end() && dividend_instrument_index() < state.market.instruments.size() &&
-            state.market.instruments[dividend_instrument_index()].ticker == result->ticker;
-        if (it != state.market.instruments.end()) {
-            it->dividend_error = std::move(result->error);
-            if (it->dividend_error.empty()) {
-                it->dividends = std::move(result->events);
-                it->dividends_stale = false;
-                it->dividends_checked_at = std::move(result->checked_at);
-                it->dividend_note = std::move(result->note);
-                try { save_dividend_cache(*it); }
-                catch (const std::exception& ex) { it->dividend_note += " | " + std::string(ex.what()); }
-            } else it->dividends_stale = true;
-            if (is_current) {
-                fill_dividend_list();
-                InvalidateRect(window, nullptr, TRUE);
-            }
-        }
+        if(result)apply_dividend_response(static_cast<std::uint64_t>(wparam),std::move(*result));
         return 0;
     }
     case WM_PAINT: {
@@ -210,6 +219,7 @@ LRESULT CALLBACK Application::handle_dividends_message(HWND window, UINT message
         limits->ptMinTrackSize.x = 1000; limits->ptMinTrackSize.y = 760; return 0;
     }
     case WM_NCDESTROY:
+        tasks.cancel(TaskKind::Dividends);dividends_page.pending_refresh=false;
         ++dividends_page.request;
         dividends_page.ticker.clear();
         dividends_page.chart_tabs = nullptr; dividends_page.chart_range = nullptr;
