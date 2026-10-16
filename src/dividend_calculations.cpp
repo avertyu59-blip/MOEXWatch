@@ -1,4 +1,5 @@
 #include "dividend_calculations.hpp"
+#include "position_cycles.hpp"
 #include "portfolio_calculations.hpp"
 #include "domain_common.hpp"
 #include <algorithm>
@@ -124,6 +125,10 @@ DividendEntitlement calculate_dividend_entitlement(std::string_view ticker, cons
     for (const auto& position : portfolio->positions) if (position.ticker == key) quantity = position.quantity;
     const double gross = quantity * event.amount_per_share;
     if (!std::isfinite(gross)) { result.reason = "Сумма выходит за диапазон чисел"; return result; }
+    if(const auto cycles=position_cycles(relevant)) {
+        for(const auto& cycle:*cycles)if(cycle.ticker==key&&cycle.quantity>0)
+            result.positions.push_back({cycle.position_id,cycle.quantity,cycle.quantity*event.amount_per_share});
+    }
     result.status = DividendEntitlementStatus::Available;
     result.quantity = quantity; result.gross_amount = gross; result.projected = as_of < *cutoff;
     result.reason = result.projected ? "Прогноз по журналу на сегодня; состав может измениться" :

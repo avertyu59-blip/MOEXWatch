@@ -1,4 +1,6 @@
 #include "portfolio_csv.hpp"
+#include "portfolio_identity.hpp"
+#include <map>
 #include <algorithm>
 #include <array>
 #include <charconv>
@@ -49,14 +51,17 @@ ImportPreview preview_portfolio_csv(std::string_view csv,const std::vector<Portf
   const char separator=header_line.find(';')!=std::string_view::npos?';':',';
   const auto rows=strict_csv(csv,separator);
   if(rows.empty())throw std::runtime_error("Файл пуст. Нужна строка заголовков date;ticker;side;quantity;price;commission");
-  const std::array<std::string,6> names{"DATE","TICKER","SIDE","QUANTITY","PRICE","COMMISSION"};
-  std::array<std::size_t,6> columns{};std::set<std::string> headers;
-  if(rows[0].cells.size()!=6)throw std::runtime_error("Ожидаются ровно 6 столбцов: date;ticker;side;quantity;price;commission");
-  for(std::size_t i=0;i<6;++i){const auto h=upper(trim(rows[0].cells[i]));const auto it=std::find(names.begin(),names.end(),h);if(it==names.end()||!headers.insert(h).second)throw std::runtime_error("Неизвестный или повторный заголовок CSV");columns[static_cast<std::size_t>(it-names.begin())]=i;}
-  std::set<Key> seen;for(const auto& t:existing)seen.insert(key(t));
+  const std::array<std::string,9> names{"DATE","TICKER","SIDE","QUANTITY","PRICE","COMMISSION","ID","POSITION_ID","SEQUENCE"};
+  std::array<std::size_t,9> columns{};std::set<std::string> headers;
+  const auto count=rows[0].cells.size();
+  if(count!=6&&count!=9)throw std::runtime_error("Ожидаются 6 старых столбцов либо 9 столбцов с id;position_id;sequence");
+  for(std::size_t i=0;i<count;++i){const auto h=upper(trim(rows[0].cells[i]));const auto it=std::find(names.begin(),names.end(),h);if(it==names.end()||(count==6&&it>=names.begin()+6)||!headers.insert(h).second)throw std::runtime_error("Неизвестный или повторный заголовок CSV");columns[static_cast<std::size_t>(it-names.begin())]=i;}
+  std::set<Key> seen;std::map<std::string,PortfolioTransaction> by_id;
+  for(const auto& t:existing){seen.insert(key(t));if(!t.id.empty())by_id.emplace(t.id,t);}
+
   for(std::size_t i=1;i<rows.size();++i){
    ImportRow row;row.line=rows[i].line;
-   if(rows[i].cells.size()!=6){row.message="Должно быть 6 полей";result.rows.push_back(row);continue;}
+   if(rows[i].cells.size()!=count){row.message="Количество полей не совпадает с заголовком";result.rows.push_back(row);continue;}
    const auto& cells=rows[i].cells;
    const auto date=trim(cells[columns[0]]),ticker=upper(trim(cells[columns[1]])),side=upper(trim(cells[columns[2]]));
    const auto q=number(cells[columns[3]]),p=number(cells[columns[4]]),fee=number(cells[columns[5]]);
@@ -64,9 +69,21 @@ ImportPreview preview_portfolio_csv(std::string_view csv,const std::vector<Portf
    if(!q||!p||!fee){row.message="Некорректное число или пустое поле; комиссия обязательна (можно 0)";result.rows.push_back(row);continue;}
    PortfolioTransaction t{date,ticker,side=="BUY"?PortfolioSide::Buy:PortfolioSide::Sell,*q,*p,*fee};
    if(!valid_portfolio_transaction(t)){row.message="Проверьте дату YYYY-MM-DD, тикер, положительные количество/цену и комиссию >= 0";result.rows.push_back(row);continue;}
-   row.transaction=t;const bool duplicate=!seen.insert(key(t)).second;
+   bool duplicate=false;
+   if(count==9) {
+    t.id=trim(cells[columns[6]]);t.position_id=trim(cells[columns[7]]);
+    const auto order=trim(cells[columns[8]]);
+    const auto [end_order,err_order]=std::from_chars(order.data(),order.data()+order.size(),t.sequence);
+    if(!valid_uuid(t.id)||!valid_uuid(t.position_id)||err_order!=std::errc{}||end_order!=order.data()+order.size()||!t.sequence){row.message="Некорректные UUID v4 или sequence";result.rows.push_back(row);continue;}
+    const auto found=by_id.find(t.id);
+    if(found!=by_id.end()) {
+     if(key(found->second)!=key(t)||found->second.position_id!=t.position_id||found->second.sequence!=t.sequence){row.transaction=t;row.message="КОНФЛИКТ ID: содержимое операции отличается; импорт заблокирован";result.rows.push_back(row);continue;}
+     duplicate=true;row.identity_duplicate=true;
+    } else by_id.emplace(t.id,t);
+   } else duplicate=seen.contains(key(t));
+   seen.insert(key(t));row.transaction=t;
    row.status=duplicate?ImportStatus::Duplicate:ImportStatus::New;
-   row.message=duplicate?"Совпадает с операцией в журнале или предыдущей строкой файла":"Новая операция";
+   row.message=row.identity_duplicate?"Этот ID уже есть: всегда пропускается":duplicate?"Возможный дубликат по 6 полям":"Новая операция";
    result.rows.push_back(std::move(row));
   }
   if(result.rows.empty())result.error="В файле нет операций";
@@ -74,22 +91,28 @@ ImportPreview preview_portfolio_csv(std::string_view csv,const std::vector<Portf
  return result;
 }
 std::optional<std::vector<PortfolioTransaction>> prepare_portfolio_import(const ImportPreview& preview,
- const std::vector<PortfolioTransaction>& existing,bool include_duplicates,std::string& error){
+ const std::vector<PortfolioTransaction>& existing,bool include_duplicates,std::string& error,std::uint64_t sequence_floor){
  error.clear();if(!preview.error.empty()){error=preview.error;return {};}
  auto result=existing;std::size_t added=0;
  for(const auto& row:preview.rows){
   if(row.status==ImportStatus::Error||!row.transaction){error="Строка "+std::to_string(row.line)+": "+row.message+". Импорт целиком заблокирован.";return {};}
-  if(row.status==ImportStatus::Duplicate&&!include_duplicates)continue;
+  if(row.identity_duplicate||(row.status==ImportStatus::Duplicate&&!include_duplicates))continue;
   result.push_back(*row.transaction);++added;
  }
  if(added==0){error="Нет новых операций. Совпадения по умолчанию пропущены.";return {};}
- std::stable_sort(result.begin(),result.end(),[](const auto&a,const auto&b){return a.date<b.date;});
+ try{result=identify_portfolio(std::move(result),sequence_floor);}
+ catch(const std::exception& ex){error=ex.what();return {};}
+
  if(!calculate_portfolio(result,{})){error="После импорта продажа превышает остаток либо расчёт невозможен. При одинаковой дате журнал идёт перед CSV, внутри CSV сохраняется порядок строк.";return {};}
  return result;
 }
 std::string export_portfolio_csv(const std::vector<PortfolioTransaction>& transactions){
- std::ostringstream out;out<<"\xEF\xBB\xBF"<<"date;ticker;side;quantity;price;commission\r\n"<<std::setprecision(17);
- for(const auto&t:transactions){if(!valid_portfolio_transaction(t))throw std::runtime_error("Журнал содержит некорректную операцию");out<<t.date<<';'<<t.ticker<<';'<<(t.side==PortfolioSide::Buy?"BUY":"SELL")<<';'<<t.quantity<<';'<<t.price<<';'<<t.commission<<"\r\n";}
+ const bool identified=std::any_of(transactions.begin(),transactions.end(),[](const auto& t){return !t.id.empty();});
+ if(identified&&!position_cycles(transactions))throw std::runtime_error("Неполные или конфликтующие ID экспорта");
+ std::ostringstream out;out<<"\xEF\xBB\xBF"<<"date;ticker;side;quantity;price;commission";
+ if(identified)out<<";id;position_id;sequence";
+ out<<"\r\n"<<std::setprecision(17);
+ for(const auto&t:transactions){if(!valid_portfolio_transaction(t))throw std::runtime_error("Журнал содержит некорректную операцию");out<<t.date<<';'<<t.ticker<<';'<<(t.side==PortfolioSide::Buy?"BUY":"SELL")<<';'<<t.quantity<<';'<<t.price<<';'<<t.commission;if(identified)out<<';'<<t.id<<';'<<t.position_id<<';'<<t.sequence;out<<"\r\n";}
  return out.str();
 }
 }

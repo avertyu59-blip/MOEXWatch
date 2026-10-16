@@ -95,18 +95,22 @@ int main(){try{
     };
     enter(L"10",L"100",0);enter(L"10",L"200",0);enter(L"5",L"180",1);
     const auto position=app.open_position_for_ticker("SBER");
+    check(position&&valid_uuid(position->position_id),"open position has persistent UUID");
+    const auto original_position_id=position->position_id;
+    const auto original_buy_id=app.portfolio_page.transactions.front().id;
     check(position&&position->quantity==15&&position->average_entry_price==150&&position->realized_profit==150,"UI operations preserve averaging and partial sale calculations");
     check(ListView_GetItemCount(app.portfolio_page.positions)==1&&ListView_GetItemCount(app.portfolio_page.transactions_list)==3,"positions and operation rows refresh together");
     ListView_SetItemState(app.portfolio_page.positions,0,LVIS_SELECTED,LVIS_SELECTED);
     SetWindowTextW(app.portfolio_page.position_stop,L"110");SetWindowTextW(app.portfolio_page.position_take,L"210");
     check(app.command_portfolio(MAKEWPARAM(ID_POSITION_LEVELS_SAVE,0)),"portfolio handles save levels command");
-    const auto* levels=app.levels_for_position("SBER",position->opened_on);
+    const auto* levels=app.levels_for_position(position->position_id);
     check(levels&&levels->stop_loss==110&&levels->take_profit==210,"levels remain tied to selected open position");
     app.portfolio_page.transactions_sort={4,false};app.apply_table_sort(app.portfolio_page.transactions_list,ID_PORT_TRANSACTIONS);
     check(row_data(app.portfolio_page.transactions_list,0)==1,"highest-priced purchase moves to first displayed row");
     ListView_SetItemState(app.portfolio_page.transactions_list,0,LVIS_SELECTED,LVIS_SELECTED);
     check(app.command_portfolio(MAKEWPARAM(ID_PORT_DELETE,0)),"portfolio handles deletion command");
     check(app.portfolio_page.transactions.size()==2&&app.portfolio_page.transactions[0].price==100&&app.portfolio_page.transactions[1].side==PortfolioSide::Sell,"delete after sorting removes selected model operation");
+    check(app.portfolio_page.transactions.front().id==original_buy_id&&app.open_position_for_ticker("SBER")->position_id==original_position_id,"deletion preserves surviving operation and position IDs");
     app.resize_portfolio(1164,720);app.activate_page(2);app.activate_page(0);app.activate_page(2);
     check(app.portfolio_page.transactions.size()==2&&ListView_GetItemCount(app.portfolio_page.transactions_list)==2,"portfolio survives resizing and tab switching");
     const auto journal=relative(app.portfolio_page.transactions_list,app.shell.window);
@@ -229,6 +233,27 @@ int main(){try{
     ListView_GetItemText(app.dividends_page.list,0,10,expected_text,1024);
     check(app.narrow(expected_text).starts_with("н/д:"),"stale event cannot display confirmed portfolio estimate");
     DestroyWindow(app.dividends_page.list);app.dividends_page.list=nullptr;
+    {
+        Fixture cycles_fixture;auto& cycles=cycles_fixture.app;
+        Instrument stock;stock.ticker="SBER";stock.quote.ticker="SBER";cycles.state.market.add(stock);
+        SendMessageW(cycles.portfolio_page.ticker,CB_ADDSTRING,0,reinterpret_cast<LPARAM>(L"SBER"));
+        SendMessageW(cycles.portfolio_page.ticker,CB_SETCURSEL,0,0);
+        const auto enter_cycle=[&](int side){
+            SetWindowTextW(cycles.portfolio_page.date,L"2026-07-01");
+            SetWindowTextW(cycles.portfolio_page.quantity,L"10");SetWindowTextW(cycles.portfolio_page.price,L"100");
+            SetWindowTextW(cycles.portfolio_page.commission,L"0");SendMessageW(cycles.portfolio_page.side,CB_SETCURSEL,static_cast<WPARAM>(side),0);
+            cycles.add_portfolio_transaction();
+        };
+        enter_cycle(0);const auto first_cycle=cycles.open_position_for_ticker("SBER")->position_id;
+        ListView_SetItemState(cycles.portfolio_page.positions,0,LVIS_SELECTED,LVIS_SELECTED);
+        SetWindowTextW(cycles.portfolio_page.position_stop,L"90");SetWindowTextW(cycles.portfolio_page.position_take,L"120");cycles.save_selected_position_levels();
+        check(cycles.levels_for_position(first_cycle)!=nullptr,"first cycle stores its own levels");
+        enter_cycle(1);enter_cycle(0);
+        const auto second_cycle=cycles.open_position_for_ticker("SBER")->position_id;
+        check(first_cycle!=second_cycle&&cycles.levels_for_position(second_cycle)==nullptr&&cycles.levels_for_position(first_cycle)!=nullptr,"same-day reopened position cannot inherit archived levels");
+        wchar_t shown_id[64]{};ListView_GetItemText(cycles.portfolio_page.positions,0,11,shown_id,64);
+        check(cycles.narrow(shown_id)==second_cycle,"position view displays current persistent ID");
+    }
     Application first_owner,second_owner;
     first_owner.state.persistence.writes_blocked=true;second_owner.state.persistence.writes_blocked=true;
     WNDCLASSEXW wc{};wc.cbSize=sizeof(wc);wc.hInstance=GetModuleHandleW(nullptr);wc.lpfnWndProc=router_host;wc.lpszClassName=L"MOEXWatchRouterTest";

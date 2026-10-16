@@ -29,8 +29,8 @@ void Application::apply_table_sort(HWND list,int id) {
     bool numeric=false;
     if(id==ID_LIST)numeric=col>=1&&col<=4;
     else if(id==ID_TRADE_LIST)numeric=col>=1;
-    else if(id==ID_PORT_POSITIONS)numeric=col>=1;
-    else if(id==ID_PORT_TRANSACTIONS)numeric=col>=3;
+    else if(id==ID_PORT_POSITIONS)numeric=col>=1&&col<=10;
+    else if(id==ID_PORT_TRANSACTIONS)numeric=col>=3&&col<=6;
     else if(id==ID_SIG_LIST)numeric=col>=1&&col<=4;
     else if(id==ID_DIVIDENDS_LIST)numeric=col==2||col==3;
     const ScopedViewUpdate update(*updating);sort_report(list,*sort,numeric);

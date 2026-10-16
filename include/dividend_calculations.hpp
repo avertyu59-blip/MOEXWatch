@@ -12,12 +12,14 @@ DividendYield calculate_dividend_yield(const DividendEvent& event, std::string_v
     std::optional<double> current_price, bool quote_stale,
     const std::vector<Candle>& candles, bool candles_stale);
 enum class DividendEntitlementStatus { Available, Unconfirmed, InsufficientData, InvalidOperations };
+struct DividendPositionEntitlement { std::string position_id; double quantity{}; double gross_amount{}; };
 struct DividendEntitlement {
     DividendEntitlementStatus status{DividendEntitlementStatus::InsufficientData};
     std::optional<double> quantity;
     std::optional<double> gross_amount;
     bool projected{};
     std::string reason;
+    std::vector<DividendPositionEntitlement> positions;
 };
 // Expected gross entitlement from a complete long-only journal, not a payment confirmation.
 // Future cutoff: only operations through as_of are counted; projected is true.

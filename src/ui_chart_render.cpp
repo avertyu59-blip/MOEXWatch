@@ -63,7 +63,7 @@ void Application::draw_chart(HDC dc, RECT area, std::size_t instrument_index, Ch
         }
         position = open_position_for_ticker(item.ticker);
         if (position) {
-            position_levels = levels_for_position(position->ticker, position->opened_on);
+            position_levels = levels_for_position(position->position_id);
             minimum = std::min(minimum, position->average_entry_price);
             maximum = std::max(maximum, position->average_entry_price);
             if (position_levels) {

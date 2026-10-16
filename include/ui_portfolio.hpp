@@ -28,6 +28,10 @@ struct PortfolioState {
     std::vector<HWND> controls;
     std::vector<PortfolioTransaction> transactions;
     std::vector<PositionLevels> position_levels;
+    std::vector<PositionLevels> unresolved_levels;
+    std::uint64_t sequence_watermark{};
+    std::vector<std::string> operation_row_ids;
+    std::vector<std::string> position_row_ids;
 };
 }
 #endif

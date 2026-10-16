@@ -34,6 +34,8 @@ void Application::fill_dividend_list() {
         if (item.dividends_stale) expected = "н/д: актуальность события не подтверждена";
         else if (entitlement.gross_amount) expected = money(*entitlement.quantity) + " акц.; " +
             money(*entitlement.gross_amount) + " RUB; " + entitlement.reason;
+        if(!item.dividends_stale)for(const auto& part:entitlement.positions)
+            expected+=" | позиция "+part.position_id+": "+money(part.gross_amount)+" RUB";
         set(10, widen(expected));
     }
     if (dividends_page.info) {

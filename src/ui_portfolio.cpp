@@ -3,24 +3,18 @@
 namespace moexwatch::ui {
 void Application::save_portfolio() {
     if (state.persistence.writes_blocked) return;
-    try { storage::save_portfolio(storage::data_directory(), portfolio_page.transactions); }
+    try { storage::save_portfolio_journal(storage::data_directory(),
+        {portfolio_page.transactions,portfolio_page.position_levels,portfolio_page.unresolved_levels,portfolio_page.sequence_watermark}); }
     catch (const std::exception& ex) { storage_failure(ex.what()); }
 }
-
 void Application::load_portfolio() {
-    try { auto loaded = portfolio_page.transactions; storage::load_portfolio(storage::data_directory(), loaded); portfolio_page.transactions = std::move(loaded); }
-    catch (const std::exception& ex) { storage_failure(ex.what()); }
-}
-
-void Application::save_position_levels() {
-    if (state.persistence.writes_blocked) return;
-    try { storage::save_position_levels(storage::data_directory(), portfolio_page.position_levels); }
-    catch (const std::exception& ex) { storage_failure(ex.what()); }
-}
-
-void Application::load_position_levels() {
-    try { auto loaded = portfolio_page.position_levels; storage::load_position_levels(storage::data_directory(), loaded); portfolio_page.position_levels = std::move(loaded); }
-    catch (const std::exception& ex) { storage_failure(ex.what()); }
+    try {
+        auto journal=storage::load_portfolio_journal(storage::data_directory());
+        portfolio_page.sequence_watermark=journal.sequence_watermark;
+        portfolio_page.transactions=std::move(journal.transactions);
+        portfolio_page.position_levels=std::move(journal.levels);
+        portfolio_page.unresolved_levels=std::move(journal.unresolved_levels);
+    } catch(const std::exception& ex){storage_failure(ex.what());}
 }
 
 std::vector<Quote> Application::portfolio_quotes() {
@@ -30,11 +24,19 @@ std::vector<Quote> Application::portfolio_quotes() {
     return quotes;
 }
 
-const PositionLevels* Application::levels_for_position(std::string_view ticker, std::string_view opened_on) {
-    const auto found = std::find_if(portfolio_page.position_levels.begin(), portfolio_page.position_levels.end(), [&](const auto& levels) {
-        return levels.ticker == ticker && levels.opened_on == opened_on;
-    });
-    return found == portfolio_page.position_levels.end() ? nullptr : &*found;
+const PositionLevels* Application::levels_for_position(std::string_view position_id) {
+    if(position_id.empty())return nullptr;
+    const auto found=std::find_if(portfolio_page.position_levels.begin(),portfolio_page.position_levels.end(),[&](const auto& levels){return levels.position_id==position_id;});
+    return found==portfolio_page.position_levels.end()?nullptr:&*found;
+}
+
+std::optional<PortfolioPosition> Application::selected_portfolio_position() {
+    const auto row=selected_row_data(portfolio_page.positions);
+    if(!row||*row>=portfolio_page.position_row_ids.size())return {};
+    const auto portfolio=calculate_portfolio(portfolio_page.transactions,{});if(!portfolio)return {};
+    const auto& id=portfolio_page.position_row_ids[*row];
+    const auto found=std::find_if(portfolio->positions.begin(),portfolio->positions.end(),[&](const auto& p){return p.position_id==id&&p.quantity>0;});
+    return found==portfolio->positions.end()?std::nullopt:std::optional<PortfolioPosition>(*found);
 }
 
 std::optional<PortfolioPosition> Application::open_position_for_ticker(std::string_view ticker) {
@@ -56,15 +58,6 @@ void Application::fill_portfolio() {
     ListView_DeleteAllItems(portfolio_page.positions);
     ListView_DeleteAllItems(portfolio_page.transactions_list);
     const auto portfolio = calculate_portfolio(portfolio_page.transactions, portfolio_quotes());
-    if (portfolio) {
-        const auto old_size = portfolio_page.position_levels.size();
-        std::erase_if(portfolio_page.position_levels, [&](const auto& levels) {
-            return std::none_of(portfolio->positions.begin(), portfolio->positions.end(), [&](const auto& position) {
-                return position.quantity > 0.0 && position.ticker == levels.ticker && position.opened_on == levels.opened_on;
-            });
-        });
-        if (portfolio_page.position_levels.size() != old_size) save_position_levels();
-    }
     const bool allocation_fresh = portfolio && portfolio->priced_positions == portfolio->open_positions &&
         std::all_of(portfolio->positions.begin(),portfolio->positions.end(),[this](const auto& position) {
             if(position.quantity<=0.0)return true;
@@ -72,16 +65,18 @@ void Application::fill_portfolio() {
             return source!=state.market.instruments.end() && !source->quote_stale;
         });
     std::size_t row_index = 0;
+    portfolio_page.position_row_ids.clear();
     if (portfolio) {
         for (const auto& position : portfolio->positions) {
             if (position.quantity <= 0.0) continue;
+            portfolio_page.position_row_ids.push_back(position.position_id);
             LVITEMW row{}; row.mask = LVIF_TEXT|LVIF_PARAM; row.lParam=static_cast<LPARAM>(row_index); row.iItem = static_cast<int>(row_index);
             auto ticker = widen(position.ticker); row.pszText = ticker.data();
             ListView_InsertItem(portfolio_page.positions, &row);
             bool stale = false;
             const auto source = std::find_if(state.market.instruments.begin(), state.market.instruments.end(), [&](const auto& item) { return item.ticker == position.ticker; });
             if (source != state.market.instruments.end()) stale = source->quote_stale;
-            const auto* levels = levels_for_position(position.ticker, position.opened_on);
+            const auto* levels = levels_for_position(position.position_id);
             const std::string values[] = {money(position.quantity), money(position.average_entry_price),
                 position.current_price ? money(*position.current_price) + (stale ? " *" : "") : "—",
                 position.market_value ? money(*position.market_value) : "—",
@@ -93,11 +88,14 @@ void Application::fill_portfolio() {
             for (int col = 1; col <= 10; ++col) {
                 auto wide = widen(values[col - 1]); ListView_SetItemText(portfolio_page.positions, static_cast<int>(row_index), col, wide.data());
             }
+            auto id_text=widen(position.position_id);ListView_SetItemText(portfolio_page.positions,static_cast<int>(row_index),11,id_text.data());
             ++row_index;
         }
     }
+    portfolio_page.operation_row_ids.clear();
     for (std::size_t i = 0; i < portfolio_page.transactions.size(); ++i) {
         const auto& transaction = portfolio_page.transactions[i];
+        portfolio_page.operation_row_ids.push_back(transaction.id);
         LVITEMW row{}; row.mask = LVIF_TEXT|LVIF_PARAM; row.lParam=static_cast<LPARAM>(i); row.iItem = static_cast<int>(i);
         auto date = widen(transaction.date); row.pszText = date.data();
         ListView_InsertItem(portfolio_page.transactions_list, &row);
@@ -106,6 +104,11 @@ void Application::fill_portfolio() {
         for (int col = 1; col <= 5; ++col) {
             auto wide = widen(values[col - 1]); ListView_SetItemText(portfolio_page.transactions_list, static_cast<int>(i), col, wide.data());
         }
+    }
+    for(std::size_t i=0;i<portfolio_page.transactions.size();++i) {
+        const auto& t=portfolio_page.transactions[i];
+        const std::string ids[]={std::to_string(t.sequence),t.id,t.position_id};
+        for(int col=6;col<9;++col){auto text=widen(ids[col-6]);ListView_SetItemText(portfolio_page.transactions_list,static_cast<int>(i),col,text.data());}
     }
     apply_table_sort(portfolio_page.positions,ID_PORT_POSITIONS);
     apply_table_sort(portfolio_page.transactions_list,ID_PORT_TRANSACTIONS);
@@ -118,7 +121,7 @@ void Application::fill_portfolio() {
         (allocation_fresh ? L"   Стоимость: " : L"   Стоимость оценённых позиций*: ") + widen(money(portfolio->total_market_value)) + L" ₽" +
         L"   Бумажная прибыль: " + widen(money(portfolio->total_unrealized_profit)) + L" ₽" +
         L"   Зафиксировано: " + widen(money(portfolio->total_realized_profit)) + (allocation_fresh ? L" ₽" : L" ₽ (* — неполная/устаревшая оценка; доли н/д)");
-    SetWindowTextW(portfolio_page.summary, summary.c_str());
+    SetWindowTextW(portfolio_page.summary, (summary+L"   Несопоставленных уровней: "+std::to_wstring(portfolio_page.unresolved_levels.size())).c_str());
 }
 
 void Application::fill_position_level_editor() {
@@ -128,16 +131,13 @@ void Application::fill_position_level_editor() {
         SetWindowTextW(portfolio_page.position_stop, L""); SetWindowTextW(portfolio_page.position_take, L"");
         return;
     }
-    wchar_t ticker_text[32]{};
-    ListView_GetItemText(portfolio_page.positions, selected, 0, ticker_text, static_cast<int>(std::size(ticker_text)));
-    const auto ticker = narrow(ticker_text);
-    const auto position = open_position_for_ticker(ticker);
+    const auto position=selected_portfolio_position();
     if (!position) return;
-    const auto* levels = levels_for_position(position->ticker, position->opened_on);
+    const auto* levels = levels_for_position(position->position_id);
     SetWindowTextW(portfolio_page.position_stop, levels && levels->stop_loss ? widen(money(*levels->stop_loss)).c_str() : L"");
     SetWindowTextW(portfolio_page.position_take, levels && levels->take_profit ? widen(money(*levels->take_profit)).c_str() : L"");
 
-    select_instrument(ticker,true);
+    select_instrument(position->ticker,true);
 
 }
 
@@ -147,10 +147,7 @@ void Application::save_selected_position_levels() {
         MessageBoxW(shell.window, L"Сначала выберите открытую позицию в таблице.", L"Уровни позиции", MB_ICONINFORMATION);
         return;
     }
-    wchar_t ticker_text[32]{};
-    ListView_GetItemText(portfolio_page.positions, selected, 0, ticker_text, static_cast<int>(std::size(ticker_text)));
-    const auto ticker = narrow(ticker_text);
-    const auto position = open_position_for_ticker(ticker);
+    const auto position=selected_portfolio_position();
     if (!position) {
         MessageBoxW(shell.window, L"Выбранная позиция уже закрыта. Обновите портфель.", L"Уровни позиции", MB_ICONWARNING);
         return;
@@ -159,17 +156,18 @@ void Application::save_selected_position_levels() {
     const auto take_text = narrow(read_edit(portfolio_page.position_take));
     const auto stop = stop_text.empty() ? std::optional<double>{} : parse_finite_number(stop_text);
     const auto take = take_text.empty() ? std::optional<double>{} : parse_finite_number(take_text);
-    PositionLevels levels{position->ticker, position->opened_on, stop, take};
+    PositionLevels levels{position->ticker, position->opened_on, stop, take, position->position_id};
     if ((!stop_text.empty() && !stop) || (!take_text.empty() && !take) || !valid_position_levels(levels)) {
         MessageBoxW(shell.window, L"Введите положительные цены для стоп-лосса и тейк-профита. Пустое поле отключает уровень.",
                     L"Некорректный уровень", MB_ICONWARNING);
         return;
     }
-    std::erase_if(portfolio_page.position_levels, [&](const auto& existing) {
-        return existing.ticker == levels.ticker && existing.opened_on == levels.opened_on;
-    });
-    if (levels.stop_loss || levels.take_profit) portfolio_page.position_levels.push_back(std::move(levels));
-    save_position_levels(); fill_portfolio(); InvalidateRect(shell.window, nullptr, TRUE);
+    auto candidate=portfolio_page.position_levels;
+    std::erase_if(candidate,[&](const auto& existing){return existing.position_id==levels.position_id;});
+    if(levels.stop_loss||levels.take_profit)candidate.push_back(levels);
+    if(!state.persistence.writes_blocked)try{storage::save_portfolio_journal(storage::data_directory(),{portfolio_page.transactions,candidate,portfolio_page.unresolved_levels,portfolio_page.sequence_watermark});}
+    catch(const std::exception& ex){storage_failure(ex.what());return;}
+    portfolio_page.position_levels=std::move(candidate);fill_portfolio();InvalidateRect(shell.window,nullptr,TRUE);
 }
 
 void Application::add_portfolio_transaction() {
@@ -194,33 +192,62 @@ void Application::add_portfolio_transaction() {
     }
     auto candidate = portfolio_page.transactions;
     candidate.push_back(transaction);
-    std::stable_sort(candidate.begin(), candidate.end(), [](const auto& a, const auto& b) { return a.date < b.date; });
-    if (!calculate_portfolio(candidate, {})) {
-        MessageBoxW(shell.window, L"Продажа превышает доступный остаток акций или в журнале уже есть несогласованные операции.",
-                    L"Недостаточно акций", MB_ICONWARNING);
-        return;
-    }
-    if (transaction.side == PortfolioSide::Sell) {
-        const auto previous_position = open_position_for_ticker(ticker);
-        if (previous_position && transaction.quantity >= previous_position->quantity - 1e-9) {
-            std::erase_if(portfolio_page.position_levels, [&](const auto& levels) {
-                return levels.ticker == previous_position->ticker && levels.opened_on == previous_position->opened_on;
-            });
-            save_position_levels();
-        }
-    }
+    try{candidate=identify_portfolio(std::move(candidate),portfolio_page.sequence_watermark);}
+    catch(const std::exception& ex){MessageBoxW(shell.window,widen(ex.what()).c_str(),L"Операция не добавлена",MB_ICONWARNING);return;}
+    if(!state.persistence.writes_blocked)try{
+        storage::save_portfolio_journal(storage::data_directory(),{candidate,portfolio_page.position_levels,portfolio_page.unresolved_levels,portfolio_page.sequence_watermark});
+    }catch(const std::exception& ex){storage_failure(ex.what());return;}
+    for(const auto& t:candidate)portfolio_page.sequence_watermark=std::max(portfolio_page.sequence_watermark,t.sequence);
     portfolio_page.transactions = std::move(candidate);
-    save_portfolio(); fill_portfolio();
+    fill_portfolio();
     SetWindowTextW(portfolio_page.quantity, L""); SetWindowTextW(portfolio_page.price, L""); SetWindowTextW(portfolio_page.commission, L"");
     SetWindowTextW(portfolio_page.date, widen(today_date()).c_str());
 }
 
 void Application::delete_portfolio_transaction() {
-    const auto selected_id=selected_row_data(portfolio_page.transactions_list);
-    const int selected=selected_id?static_cast<int>(*selected_id):-1;
-    if (selected < 0 || static_cast<std::size_t>(selected) >= portfolio_page.transactions.size()) return;
-    portfolio_page.transactions.erase(portfolio_page.transactions.begin() + selected);
-    save_portfolio(); fill_portfolio();
+    const auto selected=selected_row_data(portfolio_page.transactions_list);
+    if(!selected||*selected>=portfolio_page.operation_row_ids.size())return;
+    const auto id=portfolio_page.operation_row_ids[*selected];
+    const auto found=std::find_if(portfolio_page.transactions.begin(),portfolio_page.transactions.end(),[&](const auto& t){return t.id==id;});
+    if(found==portfolio_page.transactions.end())return;
+    auto candidate=portfolio_page.transactions;candidate.erase(candidate.begin()+(found-portfolio_page.transactions.begin()));
+    try{candidate=identify_portfolio(std::move(candidate),portfolio_page.sequence_watermark);}
+    catch(const std::exception& ex){MessageBoxW(shell.window,widen(ex.what()).c_str(),L"Удаление нарушает связи; журнал сохранён",MB_ICONWARNING);return;}
+    const auto before=position_cycles(portfolio_page.transactions),after=position_cycles(candidate);
+    const auto prior=std::find_if(before->begin(),before->end(),[&](const auto& c){return c.position_id==found->position_id;});
+    const auto next=std::find_if(after->begin(),after->end(),[&](const auto& c){return c.position_id==found->position_id;});
+    if(next==after->end()||prior->opened_on!=next->opened_on||prior->closed_on!=next->closed_on) {
+        const auto text=L"Удалить операцию "+widen(id)+L"?\nПозиция: "+widen(found->position_id)+
+            L"\nИзменятся границы или исчезнет цикл позиции. Связанные уровни останутся привязаны к прежнему ID и не перейдут новой покупке.";
+        if(MessageBoxW(shell.window,text.c_str(),L"Последствия удаления",MB_YESNO|MB_ICONWARNING|MB_DEFBUTTON2)!=IDYES)return;
+    }
+    if(!state.persistence.writes_blocked)try{
+        storage::save_portfolio_journal(storage::data_directory(),{candidate,portfolio_page.position_levels,portfolio_page.unresolved_levels,portfolio_page.sequence_watermark});
+    }catch(const std::exception& ex){storage_failure(ex.what());return;}
+    portfolio_page.transactions=std::move(candidate);fill_portfolio();InvalidateRect(shell.window,nullptr,TRUE);
+}
+
+void Application::resolve_legacy_levels() {
+    const int row=ListView_GetNextItem(portfolio_page.positions,-1,LVNI_SELECTED);
+    if(row<0){MessageBoxW(shell.window,L"Выберите открытую позицию для сопоставления старых уровней.",L"Уровни",MB_ICONINFORMATION);return;}
+    const auto position=selected_portfolio_position();if(!position)return;
+    for(std::size_t i=0;i<portfolio_page.unresolved_levels.size();++i) {
+        auto level=portfolio_page.unresolved_levels[i];if(level.ticker!=position->ticker)continue;
+        const auto question=L"Привязать старые уровни "+widen(level.ticker)+L" от "+widen(level.opened_on)+
+            L"\nСтоп: "+widen(optional_number(level.stop_loss))+L"; тейк: "+widen(optional_number(level.take_profit))+
+            L"\nк выбранной позиции "+widen(position->position_id)+L" от "+widen(position->opened_on)+
+            L"?\nТекущие уровни этой позиции будут заменены. Да — сопоставить; Нет — следующая запись.";
+        const auto answer=MessageBoxW(shell.window,question.c_str(),L"Подтверждение связи",MB_YESNOCANCEL|MB_ICONQUESTION|MB_DEFBUTTON2);
+        if(answer==IDCANCEL)return;
+        if(answer!=IDYES)continue;
+        level.position_id=position->position_id;level.opened_on=position->opened_on;
+        auto levels=portfolio_page.position_levels;auto unresolved=portfolio_page.unresolved_levels;
+        std::erase_if(levels,[&](const auto& old){return old.position_id==level.position_id;});levels.push_back(level);unresolved.erase(unresolved.begin()+static_cast<std::ptrdiff_t>(i));
+        if(!state.persistence.writes_blocked)try{storage::save_portfolio_journal(storage::data_directory(),{portfolio_page.transactions,levels,unresolved,portfolio_page.sequence_watermark});}
+        catch(const std::exception& ex){storage_failure(ex.what());return;}
+        portfolio_page.position_levels=std::move(levels);portfolio_page.unresolved_levels=std::move(unresolved);fill_portfolio();return;
+    }
+    MessageBoxW(shell.window,L"Нет несопоставленных уровней для выбранного тикера.",L"Уровни",MB_ICONINFORMATION);
 }
 
 std::optional<std::filesystem::path> Application::select_operations_csv(bool save) {
@@ -255,17 +282,18 @@ void Application::import_portfolio_operations() {
         const auto path=select_operations_csv(false);if(!path)return;
         const auto csv=storage::read_text(*path);if(!csv)throw std::runtime_error("CSV-файл не найден");
         // Synchronize existing state without changing its content before opening a preview.
-        save_watchlist();save_trades();save_portfolio();save_position_levels();save_signal_settings();
+        save_watchlist();save_trades();save_portfolio();save_signal_settings();
         if(state.persistence.writes_blocked)throw std::runtime_error("Не удалось сохранить текущие записи; импорт отменён");
-        const auto root=storage::data_directory();const auto original=storage::read_text(root/"portfolio_transactions.csv");
+        const auto root=storage::data_directory();const auto original=storage::read_text(root/"portfolio_journal_v2.csv");
         std::filesystem::path backup;
         const bool imported=review_portfolio_import(shell.window,shell.font,*csv,portfolio_page.transactions,[&](const auto& candidate){
-            if(storage::read_text(root/"portfolio_transactions.csv")!=original)throw std::runtime_error("Журнал изменился после открытия просмотра. Закройте окно и повторите импорт.");
+            if(storage::read_text(root/"portfolio_journal_v2.csv")!=original)throw std::runtime_error("Журнал изменился после открытия просмотра. Закройте окно и повторите импорт.");
             backup=storage::create_backup(root);
-            if(storage::read_text(root/"portfolio_transactions.csv")!=original)throw std::runtime_error("Журнал изменился во время резервирования. Повторите импорт.");
-            storage::save_portfolio(root,candidate);
+            if(storage::read_text(root/"portfolio_journal_v2.csv")!=original)throw std::runtime_error("Журнал изменился во время резервирования. Повторите импорт.");
+            storage::save_portfolio_journal(root,{candidate,portfolio_page.position_levels,portfolio_page.unresolved_levels,portfolio_page.sequence_watermark});
+            for(const auto& t:candidate)portfolio_page.sequence_watermark=std::max(portfolio_page.sequence_watermark,t.sequence);
             portfolio_page.transactions=candidate;
-        });
+        },portfolio_page.sequence_watermark);
         if(imported){fill_portfolio();MessageBoxW(shell.window,(L"Операции добавлены. Исходные данные сохранены:\n"+backup.wstring()+L"\nДля котировок новых тикеров добавьте их в список наблюдения.").c_str(),L"Импорт завершён",MB_ICONINFORMATION);}
     }catch(const std::exception& ex){MessageBoxW(shell.window,widen(ex.what()).c_str(),L"Импорт не выполнен",MB_ICONERROR);}
 }
@@ -302,6 +330,7 @@ void Application::create_portfolio_controls(HWND window) {
     portfolio_page.controls.push_back(portfolio_page.add);
     add_control(portfolio_page.controls,window,L"BUTTON",L"Импорт CSV",BS_PUSHBUTTON,620,95,125,28,ID_PORT_IMPORT);
     add_control(portfolio_page.controls,window,L"BUTTON",L"Экспорт CSV",BS_PUSHBUTTON,758,95,125,28,ID_PORT_EXPORT);
+    add_control(portfolio_page.controls,window,L"BUTTON",L"Сопоставить уровни",BS_PUSHBUTTON,900,95,180,28,ID_RESOLVE_LEVELS);
     add_control(portfolio_page.controls,window, L"STATIC", L"Тикер выбирается из списка наблюдения. В себестоимость покупки включается комиссия; продажа списывается по средней цене.",
         0, 16, 132, 1220, 22, 0);
     portfolio_page.summary = CreateWindowExW(0, L"STATIC", L"", WS_CHILD | WS_VISIBLE | SS_LEFT, 16, 157, 1240, 24, window,
@@ -312,9 +341,9 @@ void Application::create_portfolio_controls(HWND window) {
         16, 185, 1260, 220, window, reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_PORT_POSITIONS)), GetModuleHandleW(nullptr), nullptr);
     portfolio_page.controls.push_back(portfolio_page.positions);
     ListView_SetExtendedListViewStyle(portfolio_page.positions, LVS_EX_FULLROWSELECT | LVS_EX_GRIDLINES | LVS_EX_DOUBLEBUFFER);
-    const wchar_t* position_headers[] = {L"Тикер",L"Акций",L"Средняя, ₽",L"Котировка, ₽",L"Стоимость, ₽",L"Доля, %",L"Бумажная прибыль, ₽",L"Бумажная, %",L"Зафиксировано, ₽",L"Стоп-лосс, ₽",L"Тейк-профит, ₽"};
-    const int position_widths[] = {75,80,105,110,115,90,155,100,145,110,125};
-    for (int i=0;i<11;++i) { LVCOLUMNW col{}; col.mask=LVCF_TEXT|LVCF_WIDTH; col.pszText=const_cast<wchar_t*>(position_headers[i]); col.cx=position_widths[i]; ListView_InsertColumn(portfolio_page.positions,i,&col); }
+    const wchar_t* position_headers[] = {L"Тикер",L"Акций",L"Средняя, ₽",L"Котировка, ₽",L"Стоимость, ₽",L"Доля, %",L"Бумажная прибыль, ₽",L"Бумажная, %",L"Зафиксировано, ₽",L"Стоп-лосс, ₽",L"Тейк-профит, ₽",L"ID позиции"};
+    const int position_widths[] = {75,80,105,110,115,90,155,100,145,110,125,300};
+    for (int i=0;i<12;++i) { LVCOLUMNW col{}; col.mask=LVCF_TEXT|LVCF_WIDTH; col.pszText=const_cast<wchar_t*>(position_headers[i]); col.cx=position_widths[i]; ListView_InsertColumn(portfolio_page.positions,i,&col); }
     add_control(portfolio_page.controls,window, L"STATIC", L"Стоп-лосс, ₽", 0, 16, 418, 105, 24, 0);
     add_control(portfolio_page.controls,window, L"EDIT", L"", WS_BORDER | ES_AUTOHSCROLL, 121, 414, 110, 28, ID_POSITION_STOP);
     portfolio_page.position_stop = GetDlgItem(window, ID_POSITION_STOP);
@@ -336,9 +365,9 @@ void Application::create_portfolio_controls(HWND window) {
         16, 492, 1260, 300, window, reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_PORT_TRANSACTIONS)), GetModuleHandleW(nullptr), nullptr);
     portfolio_page.controls.push_back(portfolio_page.transactions_list);
     ListView_SetExtendedListViewStyle(portfolio_page.transactions_list, LVS_EX_FULLROWSELECT | LVS_EX_GRIDLINES | LVS_EX_DOUBLEBUFFER);
-    const wchar_t* operation_headers[] = {L"Дата",L"Тикер",L"Операция",L"Акций",L"Цена, ₽",L"Комиссия, ₽"};
-    const int operation_widths[] = {110,95,120,100,120,130};
-    for (int i=0;i<6;++i) { LVCOLUMNW col{}; col.mask=LVCF_TEXT|LVCF_WIDTH; col.pszText=const_cast<wchar_t*>(operation_headers[i]); col.cx=operation_widths[i]; ListView_InsertColumn(portfolio_page.transactions_list,i,&col); }
+    const wchar_t* operation_headers[] = {L"Дата",L"Тикер",L"Операция",L"Акций",L"Цена, ₽",L"Комиссия, ₽",L"Порядок",L"ID операции",L"ID позиции"};
+    const int operation_widths[] = {110,95,120,100,120,130,100,300,300};
+    for (int i=0;i<9;++i) { LVCOLUMNW col{}; col.mask=LVCF_TEXT|LVCF_WIDTH; col.pszText=const_cast<wchar_t*>(operation_headers[i]); col.cx=operation_widths[i]; ListView_InsertColumn(portfolio_page.transactions_list,i,&col); }
     if (shell.font) SendMessageW(portfolio_page.transactions_list, WM_SETFONT, reinterpret_cast<WPARAM>(shell.font), TRUE);
 
 }
@@ -353,6 +382,7 @@ void Application::resize_portfolio(int width, int height) {
 
 bool Application::command_portfolio(WPARAM wparam) {
     switch(LOWORD(wparam)) {
+        case ID_RESOLVE_LEVELS: resolve_legacy_levels(); return true;
         case ID_PORT_ADD: add_portfolio_transaction(); return true;
         case ID_PORT_IMPORT: import_portfolio_operations(); return true;
         case ID_PORT_EXPORT: export_portfolio_operations(); return true;

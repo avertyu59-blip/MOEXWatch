@@ -1,6 +1,7 @@
 #pragma once
 
 #include <optional>
+#include <cstdint>
 #include <cstddef>
 #include <string>
 #include <string_view>
@@ -98,6 +99,9 @@ struct PortfolioTransaction {
     double quantity{};
     double price{};
     double commission{};
+    std::string id{};
+    std::string position_id{};
+    std::uint64_t sequence{};
 };
 
 struct PortfolioPosition {
@@ -110,6 +114,7 @@ struct PortfolioPosition {
     std::optional<double> unrealized_profit;
     std::optional<double> unrealized_percent;
     double realized_profit{};
+    std::string position_id{};
 };
 
 struct PositionLevels {
@@ -117,6 +122,15 @@ struct PositionLevels {
     std::string opened_on;
     std::optional<double> stop_loss;
     std::optional<double> take_profit;
+    std::string position_id{};
+};
+
+struct PositionCycle {
+    std::string position_id;
+    std::string ticker;
+    std::string opened_on;
+    std::string closed_on;
+    double quantity{};
 };
 
 struct PortfolioSummary {

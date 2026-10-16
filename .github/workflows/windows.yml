@@ -28,3 +28,10 @@ jobs:
         run: cmake --build domain-build --parallel 2
       - name: Test calculations
         run: ctest --test-dir domain-build --output-on-failure
+
+      - name: Configure journal migration checks
+        run: cmake -S . -B migration-build -DCMAKE_BUILD_TYPE=Release
+      - name: Build journal migration tests
+        run: cmake --build migration-build --target portfolio_identity_tests --parallel 2
+      - name: Check journal identity and migration
+        run: ctest --test-dir migration-build -R portfolio_identity_tests --output-on-failure

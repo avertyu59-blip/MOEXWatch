@@ -46,6 +46,7 @@ constexpr UINT WM_FETCH_PROGRESS = WM_APP + 11;
 constexpr UINT WM_BACKTEST_READY = WM_APP + 12;
 constexpr UINT WM_DIVIDENDS_READY = WM_APP + 13;
 constexpr UINT WM_BACKUP_READY = WM_APP + 14;
+constexpr int ID_RESOLVE_LEVELS = 1063;
 constexpr int ID_BACKUP = 1060, ID_PORT_IMPORT = 1061, ID_PORT_EXPORT = 1062;
 constexpr int ID_TICKER = 1001, ID_TARGET = 1002, ID_ADD = 1003, ID_TARGET_SET = 1004,
               ID_REMOVE = 1005, ID_REFRESH = 1006, ID_LIST = 1007, ID_FILTER = 1008, ID_RANGE = 1009;
@@ -103,8 +104,7 @@ public:
     void load_trades();
     void save_portfolio();
     void load_portfolio();
-    void save_position_levels();
-    void load_position_levels();
+    void resolve_legacy_levels();
     std::string optional_number(std::optional<double> n);
     std::string percent(std::optional<double> n);
     void save_watchlist();
@@ -115,7 +115,8 @@ public:
     void update_analysis();
     void fill_trades();
     std::vector<Quote> portfolio_quotes();
-    const PositionLevels* levels_for_position(std::string_view ticker, std::string_view opened_on);
+    const PositionLevels* levels_for_position(std::string_view position_id);
+    std::optional<PortfolioPosition> selected_portfolio_position();
     std::optional<PortfolioPosition> open_position_for_ticker(std::string_view ticker);
     std::string portfolio_side_name(PortfolioSide side);
     void fill_portfolio();

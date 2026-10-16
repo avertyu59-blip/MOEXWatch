@@ -68,7 +68,7 @@ void Application::start_backup() {
     if (!IsWindowEnabled(shell.backup_button)) return;
     // Flush the UI-owned state before the worker takes a consistent disk snapshot.
     // If loading failed, preserve the original files for recovery instead.
-    if (!state.persistence.writes_blocked) { save_watchlist(); save_trades(); save_portfolio(); save_position_levels(); save_signal_settings(); }
+    if (!state.persistence.writes_blocked) { save_watchlist(); save_trades(); save_portfolio(); save_signal_settings(); }
     EnableWindow(shell.backup_button, FALSE);
     const HWND target=shell.window;
     std::thread([target] {
@@ -111,7 +111,7 @@ LRESULT CALLBACK Application::handle_window_message(HWND window, UINT message, W
     switch (message) {
     case WM_CREATE:
         shell.window = window; create_controls(window); load_signal_settings(); synchronize_signal_controls();
-        update_auto_refresh_timer(); load_watchlist(); load_observations(); load_trades(); load_portfolio(); load_position_levels(); load_market_cache(state.market.instruments, state.market.imoex_candles, state.market.imoex_error); fill_list(); fill_trades(); fill_signals(); fill_portfolio();
+        update_auto_refresh_timer(); load_watchlist(); load_observations(); load_trades(); load_portfolio(); load_market_cache(state.market.instruments, state.market.imoex_candles, state.market.imoex_error); fill_list(); fill_trades(); fill_signals(); fill_portfolio();
         for (const auto& item : state.market.instruments) {
             SendMessageW(backtest_page.ticker, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(widen(item.ticker).c_str()));
             SendMessageW(portfolio_page.ticker, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(widen(item.ticker).c_str()));
@@ -204,7 +204,7 @@ LRESULT CALLBACK Application::handle_window_message(HWND window, UINT message, W
     }
     case WM_DESTROY:
         KillTimer(window, TIMER_AUTO_REFRESH);
-        save_watchlist(); save_trades(); save_portfolio(); save_position_levels(); save_signal_settings();
+        save_watchlist(); save_trades(); save_portfolio(); save_signal_settings();
         if (signals_page.notification_icon_ready) Shell_NotifyIconW(NIM_DELETE, &signals_page.notification_icon);
         if (shell.font) DeleteObject(shell.font); PostQuitMessage(0); return 0;
     }

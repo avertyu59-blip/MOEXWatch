@@ -276,7 +276,7 @@ std::filesystem::path create_backup(const std::filesystem::path& root) {
     std::filesystem::create_directory(partial);
     try {
         std::vector<std::filesystem::path> files;
-        for(const auto* name_part:{"watchlist.csv","trades.csv","portfolio_transactions.csv","position_levels.csv","signals.ini","price_alerts.csv","signal_history.csv"})
+        for(const auto* name_part:{"portfolio_journal_v2.csv","watchlist.csv","trades.csv","portfolio_transactions.csv","position_levels.csv","signals.ini","price_alerts.csv","signal_history.csv"})
             if(std::filesystem::exists(root/name_part))files.push_back(root/name_part);
         if(std::filesystem::exists(root))for(const auto& entry:std::filesystem::directory_iterator(root)) {
             if(!entry.is_regular_file())continue;
@@ -288,7 +288,7 @@ std::filesystem::path create_backup(const std::filesystem::path& root) {
         }
         if(files.empty())throw std::runtime_error("Нет сохранённых пользовательских файлов для копирования");
         std::ostringstream manifest;
-        manifest<<"MOEXWatch backup 0.6.5\nЗакройте приложение перед восстановлением. Скопируйте файлы из этой папки в APPDATA/MOEXWatch.\nКэш котировок не требуется для восстановления.\n\nfile;bytes\n";
+        manifest<<"MOEXWatch backup 0.6.5\nЗакройте приложение перед восстановлением. Скопируйте файлы из этой папки в APPDATA/MOEXWatch.\nДля полной копии заменяйте набор файлов целиком. Если восстанавливаете старую копию без portfolio_journal_v2.csv, сначала перенесите текущий portfolio_journal_v2.csv в отдельную безопасную папку: иначе приложение продолжит читать его вместо старых файлов.\nКэш котировок не требуется для восстановления.\n\nfile;bytes\n";
         for(const auto& file:files) {
             if(std::filesystem::is_symlink(file))throw std::runtime_error("Символические ссылки в резервную копию не включаются");
             const auto bytes=read_text(file);
