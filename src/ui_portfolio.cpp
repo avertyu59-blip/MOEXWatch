@@ -9,7 +9,7 @@ void Application::save_portfolio() {
 }
 void Application::load_portfolio() {
     try {
-        auto journal=storage::load_portfolio_journal(storage::data_directory());
+        auto journal=storage::load_portfolio_journal(storage::data_directory(),!state.persistence.writes_blocked);
         portfolio_page.sequence_watermark=journal.sequence_watermark;
         portfolio_page.transactions=std::move(journal.transactions);
         portfolio_page.position_levels=std::move(journal.levels);

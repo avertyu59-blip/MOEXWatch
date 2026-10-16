@@ -70,11 +70,12 @@ void save_portfolio_journal(const std::filesystem::path& root,const PortfolioJou
     if(bytes.size()>4U*1024U*1024U)throw std::runtime_error("Журнал превышает 4 МБ; запись отменена, исходный файл сохранён");
     atomic_write(root/filename,bytes);
 }
-PortfolioJournal load_portfolio_journal(const std::filesystem::path& root) {
+PortfolioJournal load_portfolio_journal(const std::filesystem::path& root,bool allow_migration) {
     if(const auto bytes=read_text(root/filename))return decode(*bytes);
     const auto legacy_operations=read_text(root/"portfolio_transactions.csv");
     const auto legacy_levels=read_text(root/"position_levels.csv");
     if(!legacy_operations&&!legacy_levels)return {};
+    if(!allow_migration)throw std::runtime_error("Миграция портфеля приостановлена до исправления ошибки пользовательских файлов");
     std::vector<PortfolioTransaction> operations;std::vector<PositionLevels> levels;
     load_portfolio(root,operations);load_position_levels(root,levels);
     auto journal=migrate_portfolio_identity(operations,levels);

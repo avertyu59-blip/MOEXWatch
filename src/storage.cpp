@@ -97,7 +97,7 @@ void load_trades(const std::filesystem::path& root, std::vector<Trade>& value) {
     const auto rows = parse_csv(content);
     if (rows.empty() || rows.front().size() < 6 || rows.front()[0] != "ticker") throw std::runtime_error("Неизвестный формат trades.csv");
     for (std::size_t i = 1; i < rows.size(); ++i) {
-        if (rows[i].size() < 6) throw std::runtime_error("Неполная запись операций");
+        if (rows[i].size() != 6) throw std::runtime_error("Неожиданное число полей старого журнала операций");
         const auto quantity = parse_finite_number(rows[i][1]);
         const auto buy = parse_finite_number(rows[i][2]);
         const auto sell = parse_finite_number(rows[i][3]);
@@ -126,9 +126,9 @@ void load_portfolio(const std::filesystem::path& root, std::vector<PortfolioTran
     std::istringstream in(*saved);
     const std::string content((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
     const auto rows = parse_csv(content);
-    if (rows.empty() || rows.front().size() < 6 || rows.front()[0] != "date") throw std::runtime_error("Неизвестный формат portfolio_transactions.csv");
+    if (rows.empty() || rows.front() != std::vector<std::string>{"date","ticker","side","quantity","price","commission"}) throw std::runtime_error("Неизвестный формат portfolio_transactions.csv");
     for (std::size_t i = 1; i < rows.size(); ++i) {
-        if (rows[i].size() < 6) throw std::runtime_error("Неполная запись операций");
+        if (rows[i].size() != 6) throw std::runtime_error("Неожиданное число полей старого журнала операций");
         const auto quantity = parse_finite_number(rows[i][3]);
         const auto price = parse_finite_number(rows[i][4]);
         const auto commission = parse_finite_number(rows[i][5]);
@@ -164,9 +164,9 @@ void load_position_levels(const std::filesystem::path& root, std::vector<Positio
     std::istringstream in(*saved);
     const std::string content((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
     const auto rows = parse_csv(content);
-    if (rows.empty() || rows.front().size() < 4 || rows.front()[0] != "ticker") throw std::runtime_error("Неизвестный формат position_levels.csv");
+    if (rows.empty() || rows.front() != std::vector<std::string>{"ticker","opened_on","stop_loss","take_profit"}) throw std::runtime_error("Неизвестный формат position_levels.csv");
     for (std::size_t i = 1; i < rows.size(); ++i) {
-        if (rows[i].size() < 4) throw std::runtime_error("Неполная запись уровней");
+        if (rows[i].size() != 4) throw std::runtime_error("Неожиданное число полей старых уровней");
         const auto stop = rows[i][2].empty() ? std::optional<double>{} : parse_finite_number(rows[i][2]);
         const auto take = rows[i][3].empty() ? std::optional<double>{} : parse_finite_number(rows[i][3]);
         if ((!rows[i][2].empty() && !stop) || (!rows[i][3].empty() && !take)) throw std::runtime_error("Некорректное число в уровнях позиции");

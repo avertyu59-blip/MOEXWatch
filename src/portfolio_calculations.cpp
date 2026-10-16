@@ -1,4 +1,5 @@
 #include "portfolio_calculations.hpp"
+#include "position_cycles.hpp"
 #include "domain_common.hpp"
 
 #include <algorithm>
@@ -74,17 +75,17 @@ bool valid_position_levels(const PositionLevels& levels) noexcept {
 
 std::optional<PortfolioSummary> calculate_portfolio(const std::vector<PortfolioTransaction>& transactions,
                                                     const std::vector<Quote>& quotes) {
-    struct State { double quantity{}; double average_cost{}; double realized{}; std::string opened_on; };
+    struct State { double quantity{}; double average_cost{}; double realized{}; std::string opened_on; std::string position_id; };
+    const bool identified=std::any_of(transactions.begin(),transactions.end(),[](const auto& t){return !t.id.empty()||!t.position_id.empty()||t.sequence!=0;});
+    if(identified&&!position_cycles(transactions))return {};
     std::vector<PortfolioTransaction> ordered = transactions;
     for (const auto& transaction : ordered) if (!valid_portfolio_transaction(transaction)) return std::nullopt;
-    std::stable_sort(ordered.begin(), ordered.end(), [](const auto& left, const auto& right) {
-        return left.date < right.date;
-    });
+    std::stable_sort(ordered.begin(), ordered.end(), transaction_before);
     std::map<std::string, State> states;
     for (const auto& transaction : ordered) {
         auto& state = states[upper(transaction.ticker)];
         if (transaction.side == PortfolioSide::Buy) {
-            if (state.quantity == 0.0) state.opened_on = transaction.date;
+            if (state.quantity == 0.0) { state.opened_on = transaction.date; state.position_id = transaction.position_id; }
             const double old_cost = state.quantity * state.average_cost;
             const double added_cost = transaction.quantity * transaction.price + transaction.commission;
             const double new_quantity = state.quantity + transaction.quantity;
@@ -110,6 +111,7 @@ std::optional<PortfolioSummary> calculate_portfolio(const std::vector<PortfolioT
     for (const auto& [ticker, state] : states) {
         PortfolioPosition position;
         position.ticker = ticker;
+        position.position_id = state.position_id;
         position.opened_on = state.opened_on;
         position.quantity = state.quantity;
         position.average_entry_price = state.average_cost;

@@ -114,6 +114,7 @@ int main(){try{
     app.resize_portfolio(1164,720);app.activate_page(2);app.activate_page(0);app.activate_page(2);
     check(app.portfolio_page.transactions.size()==2&&ListView_GetItemCount(app.portfolio_page.transactions_list)==2,"portfolio survives resizing and tab switching");
     const auto journal=relative(app.portfolio_page.transactions_list,app.shell.window);
+    check(relative(GetDlgItem(app.shell.window,ID_RESOLVE_LEVELS),app.shell.window).right<=1164,"legacy level resolution button fits minimum width");
     check(journal.right<=1164&&journal.bottom<=720,"operation table fits minimum client size");
     check(!app.command_portfolio(MAKEWPARAM(ID_BACKTEST_RUN,0)),"portfolio leaves backtest commands alone");
     // Real chart painting into a DIB exercises every GDI path without network data.
