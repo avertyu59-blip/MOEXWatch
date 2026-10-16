@@ -1,5 +1,8 @@
 #pragma once
 #ifdef _WIN32
+#include "app_state.hpp"
+#include "ui_shell_state.hpp"
+#include "ui_dividends.hpp"
 #include "ui_trades.hpp"
 #include "ui_charts.hpp"
 #include "ui_portfolio.hpp"
@@ -14,10 +17,8 @@
 #include "observation.hpp"
 #include "observation_ui.hpp"
 #include "table_sort_win.hpp"
-#include <map>
 
 #include <algorithm>
-#include <atomic>
 #include <charconv>
 #include <cctype>
 #include <chrono>
@@ -31,7 +32,6 @@
 #include <sstream>
 #include <stdexcept>
 #include <thread>
-#include <unordered_map>
 #include <utility>
 
 #include <windows.h>
@@ -68,14 +68,6 @@ constexpr int ID_DIVIDENDS_OPEN = 1054, ID_DIVIDENDS_LIST = 1055, ID_DIVIDENDS_R
 constexpr int ID_CHART_TABS = 1057, ID_DIV_CHART_TABS = 1058, ID_DIV_CHART_RANGE = 1059;
 constexpr UINT_PTR TIMER_AUTO_REFRESH = 1;
 
-
-
-
-
-
-
-
-
 struct BackupResult { std::filesystem::path path; std::string error; };
 // UI-thread owner. Pages share market/model data through this explicit owner.
 // Each page keeps its own controls and transient UI state in the structs above.
@@ -86,20 +78,16 @@ public:
     PortfolioState portfolio_page;
     ChartsState charts_page;
     TradesState trades_page;
-    HWND app_window{};
-    HWND app_backup_button{};
-    HWND app_tabs{};
-    HFONT app_font{};
-    std::vector<Instrument> app_items;
-    std::vector<Candle> app_imoex_candles;
-    bool app_imoex_stale{true};
-    std::string app_imoex_error;
-    std::atomic<bool> app_busy{false};
-    bool app_filling = false;
-    int app_active_page = 0;
-    std::vector<HWND> app_global_controls;
-    std::map<int,TableSort> app_table_sorts;
-    bool app_storage_blocked{};
+    ApplicationState state;
+    ShellState shell;
+    DividendsState dividends_page;
+    TableSort* table_sort(int id);
+    bool* view_updating(int id);
+    bool select_instrument(std::string_view ticker, bool reveal = false);
+    std::size_t chart_instrument_index() const;
+    std::size_t dividend_instrument_index() const;
+    void apply_market_refresh(std::uint64_t request, MarketRefreshResult result);
+    void refresh_market_views();
     void apply_table_sort(HWND list,int id);
     int selected_instrument();
     std::wstring widen(std::string_view text);

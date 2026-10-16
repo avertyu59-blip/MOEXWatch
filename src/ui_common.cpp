@@ -1,9 +1,31 @@
 #include "ui_app.hpp"
 #ifdef _WIN32
 namespace moexwatch::ui {
+TableSort* Application::table_sort(int id) {
+    switch(id) {
+    case ID_LIST:return &charts_page.sort;
+    case ID_TRADE_LIST:return &trades_page.sort;
+    case ID_PORT_POSITIONS:return &portfolio_page.positions_sort;
+    case ID_PORT_TRANSACTIONS:return &portfolio_page.transactions_sort;
+    case ID_SIG_LIST:return &signals_page.sort;
+    case ID_DIVIDENDS_LIST:return &dividends_page.sort;
+    default:return nullptr;
+    }
+}
+bool* Application::view_updating(int id) {
+    switch(id) {
+    case ID_LIST:return &charts_page.updating;
+    case ID_TRADE_LIST:return &trades_page.updating;
+    case ID_PORT_POSITIONS:case ID_PORT_TRANSACTIONS:return &portfolio_page.updating;
+    case ID_SIG_LIST:return &signals_page.updating;
+    case ID_DIVIDENDS_LIST:return &dividends_page.updating;
+    default:return nullptr;
+    }
+}
 void Application::apply_table_sort(HWND list,int id) {
-    const auto found=app_table_sorts.find(id);if(found==app_table_sorts.end())return;
-    const int col=found->second.column;
+    const auto* sort=table_sort(id);auto* updating=view_updating(id);
+    if(!sort || !updating || sort->column<0)return;
+    const int col=sort->column;
     bool numeric=false;
     if(id==ID_LIST)numeric=col>=1&&col<=4;
     else if(id==ID_TRADE_LIST)numeric=col>=1;
@@ -11,7 +33,7 @@ void Application::apply_table_sort(HWND list,int id) {
     else if(id==ID_PORT_TRANSACTIONS)numeric=col>=3;
     else if(id==ID_SIG_LIST)numeric=col>=1&&col<=4;
     else if(id==ID_DIVIDENDS_LIST)numeric=col==2||col==3;
-    const bool old=app_filling;app_filling=true;sort_report(list,found->second,numeric);app_filling=old;
+    const ScopedViewUpdate update(*updating);sort_report(list,*sort,numeric);
 }
 
 std::wstring Application::widen(std::string_view text) {
@@ -75,9 +97,9 @@ std::string Application::today_date() {
 void Application::add_control(std::vector<HWND>& controls, HWND parent, const wchar_t* type, const wchar_t* caption, DWORD style, int x, int y, int w, int height, int id) {
     HWND control = CreateWindowExW(0, type, caption, WS_CHILD | WS_VISIBLE | style, x, y, w, height, parent,
                              reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), GetModuleHandleW(nullptr), nullptr);
-    if (app_font) SendMessageW(control, WM_SETFONT, reinterpret_cast<WPARAM>(app_font), TRUE);
+    if (shell.font) SendMessageW(control, WM_SETFONT, reinterpret_cast<WPARAM>(shell.font), TRUE);
     if (control) {
-        if (id == ID_REFRESH) app_global_controls.push_back(control);
+        if (id == ID_REFRESH) shell.global_controls.push_back(control);
         else controls.push_back(control);
     }
 }

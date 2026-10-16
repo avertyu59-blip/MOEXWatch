@@ -2,7 +2,7 @@
 #ifdef _WIN32
 namespace moexwatch::ui {
 void Application::save_signal_settings() {
-    if (app_storage_blocked) return;
+    if (state.persistence.writes_blocked) return;
     try { storage::save_signal_settings(storage::data_directory(), signals_page.settings); }
     catch (const std::exception& ex) { storage_failure(ex.what()); }
 }
@@ -13,25 +13,25 @@ void Application::load_signal_settings() {
 }
 
 void Application::update_auto_refresh_timer() {
-    if (!app_window) return;
-    KillTimer(app_window, TIMER_AUTO_REFRESH);
+    if (!shell.window) return;
+    KillTimer(shell.window, TIMER_AUTO_REFRESH);
     if (signals_page.settings.auto_refresh_enabled) {
         const auto milliseconds = static_cast<UINT>(signals_page.settings.auto_refresh_minutes) * 60U * 1000U;
-        SetTimer(app_window, TIMER_AUTO_REFRESH, milliseconds, nullptr);
+        SetTimer(shell.window, TIMER_AUTO_REFRESH, milliseconds, nullptr);
     }
 }
 
 void Application::synchronize_signal_controls() {
-    CheckDlgButton(app_window, ID_SIG_OVERSOLD, signals_page.settings.rsi_oversold_enabled ? BST_CHECKED : BST_UNCHECKED);
+    CheckDlgButton(shell.window, ID_SIG_OVERSOLD, signals_page.settings.rsi_oversold_enabled ? BST_CHECKED : BST_UNCHECKED);
     SetWindowTextW(signals_page.oversold_value, widen(money(signals_page.settings.rsi_oversold_below)).c_str());
-    CheckDlgButton(app_window, ID_SIG_OVERBOUGHT, signals_page.settings.rsi_overbought_enabled ? BST_CHECKED : BST_UNCHECKED);
+    CheckDlgButton(shell.window, ID_SIG_OVERBOUGHT, signals_page.settings.rsi_overbought_enabled ? BST_CHECKED : BST_UNCHECKED);
     SetWindowTextW(signals_page.overbought_value, widen(money(signals_page.settings.rsi_overbought_above)).c_str());
-    CheckDlgButton(app_window, ID_SIG_SMA, signals_page.settings.above_sma200_enabled ? BST_CHECKED : BST_UNCHECKED);
-    CheckDlgButton(app_window, ID_SIG_TARGET, signals_page.settings.near_target_enabled ? BST_CHECKED : BST_UNCHECKED);
+    CheckDlgButton(shell.window, ID_SIG_SMA, signals_page.settings.above_sma200_enabled ? BST_CHECKED : BST_UNCHECKED);
+    CheckDlgButton(shell.window, ID_SIG_TARGET, signals_page.settings.near_target_enabled ? BST_CHECKED : BST_UNCHECKED);
     SetWindowTextW(signals_page.target_value, widen(money(signals_page.settings.near_target_percent)).c_str());
-    SendMessageW(GetDlgItem(app_window, ID_SIG_MODE), CB_SETCURSEL, signals_page.settings.require_all ? 1 : 0, 0);
-    CheckDlgButton(app_window, ID_SIG_NOTIFY, signals_page.settings.notifications_enabled ? BST_CHECKED : BST_UNCHECKED);
-    CheckDlgButton(app_window, ID_SIG_AUTO_REFRESH, signals_page.settings.auto_refresh_enabled ? BST_CHECKED : BST_UNCHECKED);
+    SendMessageW(GetDlgItem(shell.window, ID_SIG_MODE), CB_SETCURSEL, signals_page.settings.require_all ? 1 : 0, 0);
+    CheckDlgButton(shell.window, ID_SIG_NOTIFY, signals_page.settings.notifications_enabled ? BST_CHECKED : BST_UNCHECKED);
+    CheckDlgButton(shell.window, ID_SIG_AUTO_REFRESH, signals_page.settings.auto_refresh_enabled ? BST_CHECKED : BST_UNCHECKED);
     const int interval_index = signals_page.settings.auto_refresh_minutes == 30 ? 1 :
         (signals_page.settings.auto_refresh_minutes == 60 ? 2 : 0);
     SendMessageW(signals_page.interval, CB_SETCURSEL, interval_index, 0);
@@ -39,32 +39,32 @@ void Application::synchronize_signal_controls() {
 
 bool Application::read_signal_settings_from_controls() {
     SignalSettings settings;
-    settings.rsi_oversold_enabled = IsDlgButtonChecked(app_window, ID_SIG_OVERSOLD) == BST_CHECKED;
-    settings.rsi_overbought_enabled = IsDlgButtonChecked(app_window, ID_SIG_OVERBOUGHT) == BST_CHECKED;
-    settings.above_sma200_enabled = IsDlgButtonChecked(app_window, ID_SIG_SMA) == BST_CHECKED;
-    settings.near_target_enabled = IsDlgButtonChecked(app_window, ID_SIG_TARGET) == BST_CHECKED;
-    settings.notifications_enabled = IsDlgButtonChecked(app_window, ID_SIG_NOTIFY) == BST_CHECKED;
-    settings.auto_refresh_enabled = IsDlgButtonChecked(app_window, ID_SIG_AUTO_REFRESH) == BST_CHECKED;
+    settings.rsi_oversold_enabled = IsDlgButtonChecked(shell.window, ID_SIG_OVERSOLD) == BST_CHECKED;
+    settings.rsi_overbought_enabled = IsDlgButtonChecked(shell.window, ID_SIG_OVERBOUGHT) == BST_CHECKED;
+    settings.above_sma200_enabled = IsDlgButtonChecked(shell.window, ID_SIG_SMA) == BST_CHECKED;
+    settings.near_target_enabled = IsDlgButtonChecked(shell.window, ID_SIG_TARGET) == BST_CHECKED;
+    settings.notifications_enabled = IsDlgButtonChecked(shell.window, ID_SIG_NOTIFY) == BST_CHECKED;
+    settings.auto_refresh_enabled = IsDlgButtonChecked(shell.window, ID_SIG_AUTO_REFRESH) == BST_CHECKED;
     const int interval_index = static_cast<int>(SendMessageW(signals_page.interval, CB_GETCURSEL, 0, 0));
     const int intervals[] = {15, 30, 60};
     if (interval_index < 0 || interval_index >= 3) {
-        MessageBoxW(app_window, L"Выберите интервал автообновления.", L"Проверьте настройки", MB_ICONWARNING);
+        MessageBoxW(shell.window, L"Выберите интервал автообновления.", L"Проверьте настройки", MB_ICONWARNING);
         return false;
     }
     settings.auto_refresh_minutes = intervals[interval_index];
-    settings.require_all = SendMessageW(GetDlgItem(app_window, ID_SIG_MODE), CB_GETCURSEL, 0, 0) == 1;
+    settings.require_all = SendMessageW(GetDlgItem(shell.window, ID_SIG_MODE), CB_GETCURSEL, 0, 0) == 1;
     const auto oversold = parse_finite_number(narrow(read_edit(signals_page.oversold_value)));
     const auto overbought = parse_finite_number(narrow(read_edit(signals_page.overbought_value)));
     const auto near_target = parse_finite_number(narrow(read_edit(signals_page.target_value)));
     if (!oversold || !overbought || !near_target) {
-        MessageBoxW(app_window, L"Введите числовые пороги RSI и расстояния до цели.", L"Проверьте условия", MB_ICONWARNING);
+        MessageBoxW(shell.window, L"Введите числовые пороги RSI и расстояния до цели.", L"Проверьте условия", MB_ICONWARNING);
         return false;
     }
     settings.rsi_oversold_below = *oversold;
     settings.rsi_overbought_above = *overbought;
     settings.near_target_percent = *near_target;
     if (!valid_signal_settings(settings)) {
-        MessageBoxW(app_window, L"Пороги RSI и расстояние до цели должны быть от 0 до 100.", L"Проверьте условия", MB_ICONWARNING);
+        MessageBoxW(shell.window, L"Пороги RSI и расстояние до цели должны быть от 0 до 100.", L"Проверьте условия", MB_ICONWARNING);
         return false;
     }
     const bool changed=!same_technical_rules(signals_page.settings,settings);
@@ -78,16 +78,17 @@ bool Application::read_signal_settings_from_controls() {
 
 void Application::fill_signals() {
     if (!signals_page.list || !signals_page.summary) return;
+    const ScopedViewUpdate update(signals_page.updating);
     ListView_DeleteAllItems(signals_page.list);
     std::size_t count = 0;
     const auto now=std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count();
-    for (const auto& item : app_items) {
+    for (const auto& item : state.market.instruments) {
         const auto analysis = analyze(item.candles);
         const auto evaluation = evaluate_signals(analysis, item.quote.last, item.target,
             item.quote_stale || !fresh_moex_quote(item.quote,now), item.candles_stale, signals_page.settings);
         if (!evaluation.matched) continue;
         ++count;
-        LVITEMW row{}; row.mask = LVIF_TEXT|LVIF_PARAM; row.lParam=static_cast<LPARAM>(&item-app_items.data()); row.iItem = static_cast<int>(count - 1);
+        LVITEMW row{}; row.mask = LVIF_TEXT|LVIF_PARAM; row.lParam=static_cast<LPARAM>(&item-state.market.instruments.data()); row.iItem = static_cast<int>(count - 1);
         auto ticker = widen(item.ticker); row.pszText = ticker.data();
         ListView_InsertItem(signals_page.list, &row);
         std::string reasons;
@@ -111,7 +112,7 @@ void Application::fill_signals() {
 void Application::add_notification_icon() {
     signals_page.notification_icon = {};
     signals_page.notification_icon.cbSize = sizeof(signals_page.notification_icon);
-    signals_page.notification_icon.hWnd = app_window;
+    signals_page.notification_icon.hWnd = shell.window;
     signals_page.notification_icon.uID = 1;
     signals_page.notification_icon.uFlags = NIF_ICON | NIF_TIP;
     signals_page.notification_icon.hIcon = LoadIconW(nullptr, IDI_APPLICATION);
@@ -135,14 +136,14 @@ void Application::notify_new_signals() {
     const auto now=std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count();
     std::vector<std::pair<std::string,std::string>> newly_matched;
     std::size_t fresh_count=0;
-    for(const auto& item:app_items) {
+    for(const auto& item:state.market.instruments) {
         const auto evaluation=evaluate_signals(analyze(item.candles),item.quote.last,item.target,item.quote_stale,item.candles_stale,signals_page.settings);
         const bool fresh=!item.quote_stale && fresh_moex_quote(item.quote,now);if(fresh)++fresh_count;
         auto events=signals_page.observer.observe(item.quote,fresh,!item.candles_stale,evaluation,signals_page.settings.require_all?"Все условия":"Любое условие",now);
         for(auto& event:events){newly_matched.emplace_back(event.ticker,event.condition+"; цена "+format_price(event.price)+"; котировка "+event.quote_time);signals_page.history.push_back(std::move(event));signals_page.history_dirty=true;}
     }
     if(signals_page.history.size()>2000)signals_page.history.erase(signals_page.history.begin(),signals_page.history.end()-2000);
-    signals_page.observation_status="Свежих котировок для проверки: "+std::to_string(fresh_count)+"/"+std::to_string(app_items.size())+" (возраст до 20 минут, МСК). История не зависит от всплывающих уведомлений.";
+    signals_page.observation_status="Свежих котировок для проверки: "+std::to_string(fresh_count)+"/"+std::to_string(state.market.instruments.size())+" (возраст до 20 минут, МСК). История не зависит от всплывающих уведомлений.";
     if(signals_page.history_dirty && signals_page.observation_writable)try {
         storage::atomic_write(storage::data_directory()/"signal_history.csv",serialize_signal_history(signals_page.history));signals_page.history_dirty=false;signals_page.observation_error.clear();
     }catch(const std::exception& ex){signals_page.observation_error=std::string("Новые события пока только в памяти: ")+ex.what();}
@@ -168,9 +169,9 @@ void Application::notify_new_signals() {
         const auto amount = std::min(message.size(), std::size(signals_page.notification_icon.szInfo) - 1);
         std::copy_n(message.begin(), amount, signals_page.notification_icon.szInfo);
         signals_page.notification_icon.szInfo[amount] = L'\0';
-        if (Shell_NotifyIconW(NIM_MODIFY, &signals_page.notification_icon) == FALSE) FlashWindow(app_window, TRUE);
+        if (Shell_NotifyIconW(NIM_MODIFY, &signals_page.notification_icon) == FALSE) FlashWindow(shell.window, TRUE);
     } else {
-        FlashWindow(app_window, TRUE);
+        FlashWindow(shell.window, TRUE);
         MessageBeep(MB_ICONINFORMATION);
     }
 }
@@ -210,7 +211,7 @@ void Application::create_signals_controls(HWND window) {
                 0, 326, 137, 800, 22, 0);
     signals_page.summary = CreateWindowExW(0, L"STATIC", L"", WS_CHILD | WS_VISIBLE | SS_LEFT, 16, 170, 1200, 25, window,
                                        reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_SIG_SUMMARY)), GetModuleHandleW(nullptr), nullptr);
-    if (app_font) SendMessageW(signals_page.summary, WM_SETFONT, reinterpret_cast<WPARAM>(app_font), TRUE);
+    if (shell.font) SendMessageW(signals_page.summary, WM_SETFONT, reinterpret_cast<WPARAM>(shell.font), TRUE);
     signals_page.controls.push_back(signals_page.summary);
     signals_page.list = CreateWindowExW(WS_EX_CLIENTEDGE, WC_LISTVIEWW, L"", WS_CHILD | WS_VISIBLE | LVS_REPORT | LVS_SINGLESEL | LVS_SHOWSELALWAYS,
                                     16, 202, 1260, 600, window, reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_SIG_LIST)), GetModuleHandleW(nullptr), nullptr);
@@ -219,21 +220,21 @@ void Application::create_signals_controls(HWND window) {
     const wchar_t* signal_headers[] = {L"Тикер", L"Цена, ₽", L"RSI14", L"SMA200, ₽", L"Цель, ₽", L"Почему совпало"};
     const int signal_widths[] = {90, 100, 90, 120, 100, 520};
     for (int i = 0; i < 6; ++i) { LVCOLUMNW col{}; col.mask = LVCF_TEXT | LVCF_WIDTH; col.pszText = const_cast<wchar_t*>(signal_headers[i]); col.cx = signal_widths[i]; ListView_InsertColumn(signals_page.list, i, &col); }
-    if (app_font) SendMessageW(signals_page.list, WM_SETFONT, reinterpret_cast<WPARAM>(app_font), TRUE);
+    if (shell.font) SendMessageW(signals_page.list, WM_SETFONT, reinterpret_cast<WPARAM>(shell.font), TRUE);
 
 }
 
 void Application::create_observation_controls(HWND window) {
     ObservationBindings bindings;
     bindings.rules=[this] {return signals_page.observer.rules();};bindings.events=[this] {return signals_page.history;};
-    bindings.tickers=[this] {std::vector<std::string> tickers;for(const auto& item:app_items)tickers.push_back(item.ticker);return tickers;};
+    bindings.tickers=[this] {std::vector<std::string> tickers;for(const auto& item:state.market.instruments)tickers.push_back(item.ticker);return tickers;};
     bindings.error=[this] {return signals_page.observation_status+" "+signals_page.observation_error;};
     bindings.save_rules=[this](const auto& rules){
         if(!signals_page.observation_writable)throw std::runtime_error("Сначала восстановите повреждённые файлы наблюдений из резервной копии");
         storage::atomic_write(storage::data_directory()/"price_alerts.csv",serialize_price_alerts(rules));signals_page.observer.configure(rules);
     };
-    bindings.open_ticker=[this](const std::string& ticker){const auto it=std::find_if(app_items.begin(),app_items.end(),[&](const auto& item){return item.ticker==ticker;});if(it==app_items.end()){MessageBoxW(app_window,L"Бумаги нет в наблюдении. Добавьте тикер на вкладке «Аналитика».",L"История сигналов",MB_ICONINFORMATION);return;}charts_page.filter=WatchFilter::All;SendMessageW(GetDlgItem(app_window,ID_FILTER),CB_SETCURSEL,0,0);charts_page.selected=static_cast<std::size_t>(it-app_items.begin());fill_list();TabCtrl_SetCurSel(app_tabs,0);activate_page(0);};
-    signals_page.observation_page=create_observation_page(window,app_font,std::move(bindings));
+    bindings.open_ticker=[this](const std::string& ticker){const auto it=std::find_if(state.market.instruments.begin(),state.market.instruments.end(),[&](const auto& item){return item.ticker==ticker;});if(it==state.market.instruments.end()){MessageBoxW(shell.window,L"Бумаги нет в наблюдении. Добавьте тикер на вкладке «Аналитика».",L"История сигналов",MB_ICONINFORMATION);return;}select_instrument(ticker,true);TabCtrl_SetCurSel(shell.tabs,0);activate_page(0);};
+    signals_page.observation_page=create_observation_page(window,shell.font,std::move(bindings));
     if(!signals_page.observation_page)MessageBoxW(window,L"Не удалось создать вкладку истории сигналов.",L"MOEXWatch",MB_ICONERROR);
 
 }
@@ -247,7 +248,7 @@ void Application::resize_signals(int width, int height) {
 bool Application::command_signals(WPARAM wparam) {
     switch(LOWORD(wparam)) {
         case ID_SIG_SAVE:
-            if (read_signal_settings_from_controls()) MessageBoxW(app_window, L"Условия сохранены. Уведомления будут приходить при появлении новых совпадений; текущие сигналы не дублируются.", L"Сигналы", MB_ICONINFORMATION);
+            if (read_signal_settings_from_controls()) MessageBoxW(shell.window, L"Условия сохранены. Уведомления будут приходить при появлении новых совпадений; текущие сигналы не дублируются.", L"Сигналы", MB_ICONINFORMATION);
             return true;
     }
     return false;

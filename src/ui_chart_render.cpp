@@ -4,7 +4,7 @@ namespace moexwatch::ui {
 HWND Application::create_chart_tabs(HWND parent, int id, int x, int y, int width) {
     HWND tabs = CreateWindowExW(0, WC_TABCONTROLW, L"", WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | TCS_SINGLELINE,
         x, y, width, 30, parent, reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), GetModuleHandleW(nullptr), nullptr);
-    if (app_font) SendMessageW(tabs, WM_SETFONT, reinterpret_cast<WPARAM>(app_font), TRUE);
+    if (shell.font) SendMessageW(tabs, WM_SETFONT, reinterpret_cast<WPARAM>(shell.font), TRUE);
     const wchar_t* names[] = {L"Цена", L"Сравнение с IMOEX", L"Объёмы", L"RSI"};
     for (int i = 0; i < 4; ++i) {
         TCITEMW tab{}; tab.mask = TCIF_TEXT; tab.pszText = const_cast<wchar_t*>(names[i]);
@@ -17,12 +17,12 @@ HWND Application::create_chart_tabs(HWND parent, int id, int x, int y, int width
 void Application::draw_chart(HDC dc, RECT area, std::size_t instrument_index, ChartPanel panel, int sessions) {
     FillRect(dc, &area, reinterpret_cast<HBRUSH>(COLOR_WINDOW + 1));
     SetBkMode(dc, TRANSPARENT);
-    if (instrument_index >= app_items.size() || app_items[instrument_index].candles.empty()) {
+    if (instrument_index >= state.market.instruments.size() || state.market.instruments[instrument_index].candles.empty()) {
         DrawTextW(dc, L"Нет данных для графика. Выберите акцию и нажмите «Обновить».", -1,
             &area, DT_CENTER | DT_VCENTER | DT_WORDBREAK);
         return;
     }
-    const auto& item = app_items[instrument_index];
+    const auto& item = state.market.instruments[instrument_index];
     const auto& candles = item.candles;
     const std::size_t count = candles.size();
     const std::size_t first = sessions > 0 && count > static_cast<std::size_t>(sessions)
@@ -83,7 +83,7 @@ void Application::draw_chart(HDC dc, RECT area, std::size_t instrument_index, Ch
         text(area.left + 4, area.top + 44, detail, gray);
     } else if (panel == ChartPanel::Comparison) {
         heading += " | Сравнение с IMOEX, база 100";
-        const auto comparison = normalized_comparison_series(candles, app_imoex_candles, first);
+        const auto comparison = normalized_comparison_series(candles, state.market.imoex_candles, first);
         primary = comparison.stock; secondary = comparison.benchmark;
         minimum = 100.0; maximum = 100.0;
         std::optional<double> stock_last, index_last;
@@ -102,7 +102,7 @@ void Application::draw_chart(HDC dc, RECT area, std::size_t instrument_index, Ch
             RestoreDC(dc, saved_dc); return;
         }
         text(area.left + 4, area.top + 22, "Акция (синяя): " + percent(stock_last) + " | IMOEX (оранжевая): " + percent(index_last) +
-            (app_imoex_stale ? " | IMOEX устарел" : ""), gray);
+            (state.market.imoex_stale ? " | IMOEX устарел" : ""), gray);
     } else if (panel == ChartPanel::Volume) {
         heading += " | Дневной объём, акций";
         secondary = volume_ratio_series(candles);

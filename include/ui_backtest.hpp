@@ -1,6 +1,7 @@
 #pragma once
 #ifdef _WIN32
 #include <windows.h>
+#include "table_sort_win.hpp"
 #include <vector>
 #include <string>
 #include <atomic>
@@ -8,6 +9,7 @@
 
 namespace moexwatch::ui {
 struct BacktestState {
+    bool updating{};
     HWND ticker{};
     HWND capital{};
     HWND fee{};

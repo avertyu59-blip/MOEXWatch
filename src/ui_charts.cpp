@@ -1,19 +1,35 @@
 #include "ui_app.hpp"
 #ifdef _WIN32
 namespace moexwatch::ui {
+std::size_t Application::chart_instrument_index() const {
+    return charts_page.selection.index(state.market).value_or(state.market.instruments.size());
+}
+std::size_t Application::dividend_instrument_index() const {
+    return state.market.index_of(dividends_page.ticker).value_or(state.market.instruments.size());
+}
 int Application::selected_instrument() {
-    const auto selected=selected_row_data(charts_page.list);
-    return selected && *selected<app_items.size()?static_cast<int>(*selected):-1;
+    if(charts_page.visible.empty())return -1;
+    const auto index=charts_page.selection.index(state.market);
+    return index?static_cast<int>(*index):-1;
+}
+bool Application::select_instrument(std::string_view ticker,bool reveal) {
+    if(!charts_page.selection.choose(ticker,state.market))return false;
+    if(reveal) {
+        charts_page.filter=WatchFilter::All;
+        SendMessageW(GetDlgItem(shell.window,ID_FILTER),CB_SETCURSEL,0,0);
+        fill_list();
+    } else update_analysis();
+    return true;
 }
 
 void Application::save_watchlist() {
-    if (app_storage_blocked) return;
-    try { storage::save_watchlist(storage::data_directory(), app_items); }
+    if (state.persistence.writes_blocked) return;
+    try { storage::save_watchlist(storage::data_directory(), state.market.instruments); }
     catch (const std::exception& ex) { storage_failure(ex.what()); }
 }
 
 void Application::load_watchlist() {
-    try { auto loaded = app_items; storage::load_watchlist(storage::data_directory(), loaded); app_items = std::move(loaded); }
+    try { auto loaded = state.market.instruments; storage::load_watchlist(storage::data_directory(), loaded); state.market.instruments = std::move(loaded); }
     catch (const std::exception& ex) { storage_failure(ex.what()); }
 }
 
@@ -30,11 +46,11 @@ std::string Application::status_for(const Instrument& item) {
 }
 
 void Application::fill_list() {
-    app_filling = true;
+    const ScopedViewUpdate update(charts_page.updating);
     ListView_DeleteAllItems(charts_page.list);
     charts_page.visible.clear();
-    for (std::size_t i = 0; i < app_items.size(); ++i) {
-        const auto& item = app_items[i];
+    for (std::size_t i = 0; i < state.market.instruments.size(); ++i) {
+        const auto& item = state.market.instruments[i];
         const auto analysis = analyze(item.candles);
         const bool stale = item.quote_stale ||
             (charts_page.filter != WatchFilter::NearTarget && item.candles_stale);
@@ -50,25 +66,27 @@ void Application::fill_list() {
             auto wide = widen(values[col - 1]); ListView_SetItemText(charts_page.list, row_index, col, wide.data());
         }
     }
+    charts_page.selection.reconcile(state.market,charts_page.visible);
     if (!charts_page.visible.empty()) {
-        const auto selected = std::find(charts_page.visible.begin(), charts_page.visible.end(), charts_page.selected);
-        const auto row = selected == charts_page.visible.end() ? 0 : static_cast<int>(selected - charts_page.visible.begin());
-        charts_page.selected = charts_page.visible[static_cast<std::size_t>(row)];
-        ListView_SetItemState(charts_page.list, row, LVIS_SELECTED | LVIS_FOCUSED, LVIS_SELECTED | LVIS_FOCUSED);
+        const auto selected=std::find(charts_page.visible.begin(),charts_page.visible.end(),chart_instrument_index());
+        if(selected!=charts_page.visible.end()) {
+            const auto row=static_cast<int>(selected-charts_page.visible.begin());
+            ListView_SetItemState(charts_page.list,row,LVIS_SELECTED|LVIS_FOCUSED,LVIS_SELECTED|LVIS_FOCUSED);
+        }
     }
     apply_table_sort(charts_page.list,ID_LIST);
-    app_filling = false;
     update_analysis();
 }
 
 void Application::update_analysis() {
     if (!charts_page.analysis) return;
-    if (app_items.empty() || charts_page.visible.empty()) {
+    if (state.market.instruments.empty() || charts_page.visible.empty()) {
         SetWindowTextW(charts_page.analysis, L"Нет акций, соответствующих фильтру. Выберите «Все акции». ");
-        InvalidateRect(app_window, nullptr, TRUE); return;
+        InvalidateRect(shell.window, nullptr, TRUE); return;
     }
-    charts_page.selected = std::min(charts_page.selected, app_items.size() - 1);
-    const auto& item = app_items[charts_page.selected];
+    const auto index=chart_instrument_index();
+    if(index>=state.market.instruments.size())return;
+    const auto& item = state.market.instruments[index];
     const auto a = analyze(item.candles);
     std::ostringstream text;
     text << item.ticker << "   |   Последняя цена: " << optional_number(item.quote.last) << " RUB\r\n"
@@ -87,69 +105,67 @@ void Application::update_analysis() {
          << (item.candles_checked_at.empty() ? "" : " " + item.candles_checked_at)
          << "  |  свечей: " << item.candles.size();
     if (!item.error.empty()) text << "\r\nСтатус источника: " << item.error;
-    if (!app_imoex_error.empty()) text << "\r\nИстория IMOEX: " << app_imoex_error;
+    if (!state.market.imoex_error.empty()) text << "\r\nИстория IMOEX: " << state.market.imoex_error;
     text << "\r\nТехнические индикаторы описывают прошлые цены и не являются сигналом к покупке.";
     SetWindowTextW(charts_page.analysis, widen(text.str()).c_str());
-    InvalidateRect(app_window, nullptr, TRUE);
+    InvalidateRect(shell.window, nullptr, TRUE);
 }
 
 void Application::add_ticker() {
     std::string ticker = narrow(read_edit(charts_page.ticker_edit));
     std::transform(ticker.begin(), ticker.end(), ticker.begin(), [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
-    if (!valid_ticker(ticker)) { MessageBoxW(app_window, L"Введите тикер латиницей, например SBER.", L"Некорректный тикер", MB_ICONWARNING); return; }
-    if (app_items.size() >= 30) { MessageBoxW(app_window, L"В списке может быть не более 30 тикеров.", L"Лимит списка", MB_ICONINFORMATION); return; }
-    if (std::any_of(app_items.begin(), app_items.end(), [&](const auto& x) { return x.ticker == ticker; })) {
-        MessageBoxW(app_window, L"Этот тикер уже есть в списке.", L"Список наблюдения", MB_ICONINFORMATION); return;
+    if (!valid_ticker(ticker)) { MessageBoxW(shell.window, L"Введите тикер латиницей, например SBER.", L"Некорректный тикер", MB_ICONWARNING); return; }
+    if (state.market.instruments.size() >= 30) { MessageBoxW(shell.window, L"В списке может быть не более 30 тикеров.", L"Лимит списка", MB_ICONINFORMATION); return; }
+    if (std::any_of(state.market.instruments.begin(), state.market.instruments.end(), [&](const auto& x) { return x.ticker == ticker; })) {
+        MessageBoxW(shell.window, L"Этот тикер уже есть в списке.", L"Список наблюдения", MB_ICONINFORMATION); return;
     }
     Instrument item; item.ticker = ticker; item.quote.ticker = ticker;
     signals_page.observer.forget_ticker(ticker);
-    app_items.push_back(std::move(item)); charts_page.selected = app_items.size() - 1;
+    state.market.add(std::move(item)); charts_page.selection.choose(ticker,state.market);
     SendMessageW(backtest_page.ticker, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(widen(ticker).c_str()));
     SendMessageW(portfolio_page.ticker, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(widen(ticker).c_str()));
-    SendMessageW(portfolio_page.ticker, CB_SETCURSEL, static_cast<WPARAM>(app_items.size() - 1), 0);
-    SendMessageW(backtest_page.ticker, CB_SETCURSEL, static_cast<WPARAM>(app_items.size() - 1), 0);
+    SendMessageW(portfolio_page.ticker, CB_SETCURSEL, static_cast<WPARAM>(state.market.instruments.size() - 1), 0);
+    SendMessageW(backtest_page.ticker, CB_SETCURSEL, static_cast<WPARAM>(state.market.instruments.size() - 1), 0);
     SetWindowTextW(charts_page.ticker_edit, L""); save_watchlist(); fill_list(); fill_signals(); signals_page.baseline_ready = false; refresh_data();
 }
 
 void Application::set_target() {
     const int selected = selected_instrument();
-    if (selected < 0 || static_cast<std::size_t>(selected) >= app_items.size()) return;
+    if (selected < 0 || static_cast<std::size_t>(selected) >= state.market.instruments.size()) return;
     const auto text = narrow(read_edit(charts_page.target_edit));
-    if (text.empty()) app_items[static_cast<std::size_t>(selected)].target.reset();
+    if (text.empty()) state.market.instruments[static_cast<std::size_t>(selected)].target.reset();
     else {
         try {
             std::string normalized = text;
             std::replace(normalized.begin(), normalized.end(), ',', '.');
             std::size_t used = 0; const double value = std::stod(normalized, &used);
             if (used != normalized.size() || !std::isfinite(value) || value <= 0.0) throw std::invalid_argument("target");
-            app_items[static_cast<std::size_t>(selected)].target = value;
-        } catch (...) { MessageBoxW(app_window, L"Введите положительную цену. Для очистки оставьте поле пустым.", L"Некорректная цель", MB_ICONWARNING); return; }
+            state.market.instruments[static_cast<std::size_t>(selected)].target = value;
+        } catch (...) { MessageBoxW(shell.window, L"Введите положительную цену. Для очистки оставьте поле пустым.", L"Некорректная цель", MB_ICONWARNING); return; }
     }
     save_watchlist(); fill_list(); fill_signals(); signals_page.baseline_ready = false;
 }
 
 void Application::remove_selected() {
     const int selected = selected_instrument();
-    if (selected < 0 || static_cast<std::size_t>(selected) >= app_items.size()) return;
+    if (selected < 0 || static_cast<std::size_t>(selected) >= state.market.instruments.size()) return;
     const auto portfolio = calculate_portfolio(portfolio_page.transactions, {});
     if (portfolio && std::any_of(portfolio->positions.begin(), portfolio->positions.end(), [&](const auto& position) {
-            return position.ticker == app_items[static_cast<std::size_t>(selected)].ticker && position.quantity > 0.0;
+            return position.ticker == state.market.instruments[static_cast<std::size_t>(selected)].ticker && position.quantity > 0.0;
         })) {
-        MessageBoxW(app_window, L"Тикер нельзя убрать из наблюдения, пока по нему есть открытая позиция.", L"Открытая позиция", MB_ICONINFORMATION);
+        MessageBoxW(shell.window, L"Тикер нельзя убрать из наблюдения, пока по нему есть открытая позиция.", L"Открытая позиция", MB_ICONINFORMATION);
         return;
     }
-    if (charts_page.dividend_window) {
-        if (static_cast<std::size_t>(selected) == charts_page.dividend_instrument) DestroyWindow(charts_page.dividend_window);
-        else if (static_cast<std::size_t>(selected) < charts_page.dividend_instrument) --charts_page.dividend_instrument;
-    }
-    signals_page.observer.forget_ticker(app_items[static_cast<std::size_t>(selected)].ticker);
-    app_items.erase(app_items.begin() + selected);
+    const auto removed_ticker=state.market.instruments[static_cast<std::size_t>(selected)].ticker;
+    if(dividends_page.window && dividends_page.ticker==removed_ticker)DestroyWindow(dividends_page.window);
+    signals_page.observer.forget_ticker(removed_ticker);
+    state.market.remove(removed_ticker);
     SendMessageW(portfolio_page.ticker, CB_DELETESTRING, static_cast<WPARAM>(selected), 0);
-    if (!app_items.empty()) SendMessageW(portfolio_page.ticker, CB_SETCURSEL, static_cast<WPARAM>(std::min(static_cast<std::size_t>(selected), app_items.size() - 1)), 0);
+    if (!state.market.instruments.empty()) SendMessageW(portfolio_page.ticker, CB_SETCURSEL, static_cast<WPARAM>(std::min(static_cast<std::size_t>(selected), state.market.instruments.size() - 1)), 0);
     SendMessageW(backtest_page.ticker, CB_DELETESTRING, static_cast<WPARAM>(selected), 0);
-    if (!app_items.empty()) SendMessageW(backtest_page.ticker, CB_SETCURSEL, static_cast<WPARAM>(std::min(static_cast<std::size_t>(selected), app_items.size() - 1)), 0);
-    if (app_items.empty()) charts_page.selected = 0; else charts_page.selected = std::min(static_cast<std::size_t>(selected), app_items.size() - 1);
-    save_watchlist(); fill_list(); fill_signals(); signals_page.baseline_ready = false; InvalidateRect(app_window, nullptr, TRUE);
+    if (!state.market.instruments.empty()) SendMessageW(backtest_page.ticker, CB_SETCURSEL, static_cast<WPARAM>(std::min(static_cast<std::size_t>(selected), state.market.instruments.size() - 1)), 0);
+    // The ticker selection is reconciled by fill_list, independent of vector indices.
+    save_watchlist(); fill_list(); fill_signals(); signals_page.baseline_ready = false; InvalidateRect(shell.window, nullptr, TRUE);
 }
 
 void Application::create_charts_controls(HWND window) {
@@ -166,7 +182,7 @@ void Application::create_charts_controls(HWND window) {
     add_control(charts_page.market_controls,window, L"BUTTON", L"Дивиденды", BS_PUSHBUTTON, 914, 57, 125, 28, ID_DIVIDENDS_OPEN);
     add_control(charts_page.market_controls,window, L"STATIC", L"Данные MOEX ISS могут отображаться с задержкой до 15 минут. Это приложение не отправляет сделки.", 0, 16, 94, 950, 22, 0);
     charts_page.status = CreateWindowExW(0, L"STATIC", L"Готово", WS_CHILD | WS_VISIBLE, 16, 119, 940, 24, window, nullptr, GetModuleHandleW(nullptr), nullptr);
-    if (app_font) SendMessageW(charts_page.status, WM_SETFONT, reinterpret_cast<WPARAM>(app_font), TRUE);
+    if (shell.font) SendMessageW(charts_page.status, WM_SETFONT, reinterpret_cast<WPARAM>(shell.font), TRUE);
     charts_page.market_controls.push_back(charts_page.status);
     add_control(charts_page.market_controls,window, L"STATIC", L"Фильтр", 0, 16, 153, 58, 24, 0);
     add_control(charts_page.market_controls,window, L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_VSCROLL, 78, 149, 265, 220, ID_FILTER);
@@ -185,10 +201,10 @@ void Application::create_charts_controls(HWND window) {
     const wchar_t* headers[] = {L"Тикер", L"Цена", L"Изм.%", L"Цель", L"RSI14", L"Статус"};
     const int widths[] = {65, 76, 68, 70, 60, 130};
     for (int i = 0; i < 6; ++i) { LVCOLUMNW col{}; col.mask = LVCF_TEXT | LVCF_WIDTH; col.pszText = const_cast<wchar_t*>(headers[i]); col.cx = widths[i]; ListView_InsertColumn(charts_page.list, i, &col); }
-    if (app_font) SendMessageW(charts_page.list, WM_SETFONT, reinterpret_cast<WPARAM>(app_font), TRUE);
+    if (shell.font) SendMessageW(charts_page.list, WM_SETFONT, reinterpret_cast<WPARAM>(shell.font), TRUE);
     charts_page.analysis = CreateWindowExW(0, L"STATIC", L"", WS_CHILD | WS_VISIBLE | SS_LEFT, 610, 184, 690, 245, window, nullptr, GetModuleHandleW(nullptr), nullptr);
     charts_page.market_controls.push_back(charts_page.analysis);
-    if (app_font) SendMessageW(charts_page.analysis, WM_SETFONT, reinterpret_cast<WPARAM>(app_font), TRUE);
+    if (shell.font) SendMessageW(charts_page.analysis, WM_SETFONT, reinterpret_cast<WPARAM>(shell.font), TRUE);
     charts_page.chart_tabs = create_chart_tabs(window, ID_CHART_TABS, 610, 435, 690);
     charts_page.market_controls.push_back(charts_page.chart_tabs);
 
@@ -209,16 +225,16 @@ bool Application::command_charts(WPARAM wparam) {
 
         case ID_FILTER:
             if (HIWORD(wparam) == CBN_SELCHANGE) {
-                charts_page.filter = static_cast<WatchFilter>(SendMessageW(GetDlgItem(app_window, ID_FILTER), CB_GETCURSEL, 0, 0));
+                charts_page.filter = static_cast<WatchFilter>(SendMessageW(GetDlgItem(shell.window, ID_FILTER), CB_GETCURSEL, 0, 0));
                 fill_list();
             }
             return true;
         case ID_RANGE:
             if (HIWORD(wparam) == CBN_SELCHANGE) {
                 const int ranges[] = {22, 66, 252, 0};
-                const auto index = SendMessageW(GetDlgItem(app_window, ID_RANGE), CB_GETCURSEL, 0, 0);
+                const auto index = SendMessageW(GetDlgItem(shell.window, ID_RANGE), CB_GETCURSEL, 0, 0);
                 if (index >= 0 && index < 4) charts_page.chart_sessions = ranges[index];
-                InvalidateRect(app_window, nullptr, TRUE);
+                InvalidateRect(shell.window, nullptr, TRUE);
             }
             return true;
     }
@@ -228,12 +244,12 @@ bool Application::command_charts(WPARAM wparam) {
 bool Application::notify_charts(LPARAM lparam) {
         if (reinterpret_cast<NMHDR*>(lparam)->idFrom == ID_CHART_TABS && reinterpret_cast<NMHDR*>(lparam)->code == TCN_SELCHANGE) {
             charts_page.chart_panel = static_cast<ChartPanel>(std::clamp(TabCtrl_GetCurSel(charts_page.chart_tabs), 0, 3));
-            InvalidateRect(app_window, nullptr, TRUE); return true;
+            InvalidateRect(shell.window, nullptr, TRUE); return true;
         }
         if (reinterpret_cast<NMHDR*>(lparam)->idFrom == ID_LIST && reinterpret_cast<NMHDR*>(lparam)->code == LVN_ITEMCHANGED) {
-            if (app_filling) return true;
-            const int selected = selected_instrument();
-            if (selected >= 0 && static_cast<std::size_t>(selected) < app_items.size()) { charts_page.selected = static_cast<std::size_t>(selected); update_analysis(); }
+            if (charts_page.updating) return true;
+            const auto selected=selected_row_data(charts_page.list);
+            if(selected && *selected<state.market.instruments.size())select_instrument(state.market.instruments[*selected].ticker);
             return true;
         }
 
@@ -242,8 +258,8 @@ bool Application::notify_charts(LPARAM lparam) {
 
 void Application::paint_charts(HDC dc,RECT client) {
             RECT chart{client.left + client.right * 46 / 100, 475, client.right - 16, client.bottom - 20};
-            const auto old_font = SelectObject(dc, app_font);
-            draw_chart(dc, chart, charts_page.selected, charts_page.chart_panel, charts_page.chart_sessions);
+            const auto old_font = SelectObject(dc, shell.font);
+            draw_chart(dc, chart, charts_page.visible.empty()?state.market.instruments.size():chart_instrument_index(), charts_page.chart_panel, charts_page.chart_sessions);
             SelectObject(dc, old_font);
 }
 

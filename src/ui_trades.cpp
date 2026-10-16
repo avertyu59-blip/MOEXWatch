@@ -2,7 +2,7 @@
 #ifdef _WIN32
 namespace moexwatch::ui {
 void Application::save_trades() {
-    if (app_storage_blocked) return;
+    if (state.persistence.writes_blocked) return;
     try { storage::save_trades(storage::data_directory(), trades_page.records); }
     catch (const std::exception& ex) { storage_failure(ex.what()); }
 }
@@ -14,6 +14,7 @@ void Application::load_trades() {
 
 void Application::fill_trades() {
     if (!trades_page.list) return;
+    const ScopedViewUpdate update(trades_page.updating);
     ListView_DeleteAllItems(trades_page.list);
     const auto totals = calculate_trade_totals(trades_page.records);
     for (std::size_t i = 0; i < trades_page.records.size(); ++i) {
@@ -51,13 +52,13 @@ void Application::add_trade() {
     const auto commission = commission_text.empty() ? std::optional<double>(0.0) : parse_finite_number(commission_text);
     const auto tax = tax_text.empty() ? std::optional<double>(0.0) : parse_finite_number(tax_text);
     if (!quantity || !buy || !sell || !commission || !tax) {
-        MessageBoxW(app_window, L"Проверьте числа. Можно использовать точку или запятую; пустые комиссия и налог считаются равными 0.",
+        MessageBoxW(shell.window, L"Проверьте числа. Можно использовать точку или запятую; пустые комиссия и налог считаются равными 0.",
                     L"Не удалось добавить сделку", MB_ICONWARNING);
         return;
     }
     Trade trade{ticker, *quantity, *buy, *sell, *commission, *tax};
     if (!valid_trade(trade)) {
-        MessageBoxW(app_window, L"Укажите корректный тикер, количество и цены больше нуля, комиссию от 0 ₽ и ставку налога от 0 до 100%.",
+        MessageBoxW(shell.window, L"Укажите корректный тикер, количество и цены больше нуля, комиссию от 0 ₽ и ставку налога от 0 до 100%.",
                     L"Не удалось добавить сделку", MB_ICONWARNING);
         return;
     }
@@ -102,7 +103,7 @@ void Application::create_trades_controls(HWND window) {
                 0, 16, 130, 1200, 22, 0);
     trades_page.summary = CreateWindowExW(0, L"STATIC", L"", WS_CHILD | WS_VISIBLE | SS_LEFT, 16, 153, 1200, 26, window,
                                       reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_TRADE_SUMMARY)), GetModuleHandleW(nullptr), nullptr);
-    if (app_font) SendMessageW(trades_page.summary, WM_SETFONT, reinterpret_cast<WPARAM>(app_font), TRUE);
+    if (shell.font) SendMessageW(trades_page.summary, WM_SETFONT, reinterpret_cast<WPARAM>(shell.font), TRUE);
     trades_page.controls.push_back(trades_page.summary);
     trades_page.list = CreateWindowExW(WS_EX_CLIENTEDGE, WC_LISTVIEWW, L"", WS_CHILD | WS_VISIBLE | LVS_REPORT | LVS_SINGLESEL | LVS_SHOWSELALWAYS,
                                    16, 184, 1260, 620, window, reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_TRADE_LIST)), GetModuleHandleW(nullptr), nullptr);
@@ -111,7 +112,7 @@ void Application::create_trades_controls(HWND window) {
     const wchar_t* trade_headers[] = {L"Тикер", L"Кол-во", L"Покупка, ₽", L"Продажа, ₽", L"Валовая, ₽", L"Комиссия, ₽", L"Налог, %", L"Налог, ₽", L"Чистая, ₽"};
     const int trade_widths[] = {75, 75, 105, 105, 110, 110, 90, 100, 110};
     for (int i = 0; i < 9; ++i) { LVCOLUMNW col{}; col.mask = LVCF_TEXT | LVCF_WIDTH; col.pszText = const_cast<wchar_t*>(trade_headers[i]); col.cx = trade_widths[i]; ListView_InsertColumn(trades_page.list, i, &col); }
-    if (app_font) SendMessageW(trades_page.list, WM_SETFONT, reinterpret_cast<WPARAM>(app_font), TRUE);
+    if (shell.font) SendMessageW(trades_page.list, WM_SETFONT, reinterpret_cast<WPARAM>(shell.font), TRUE);
 
 }
 
