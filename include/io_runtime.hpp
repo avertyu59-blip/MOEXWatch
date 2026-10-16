@@ -7,6 +7,8 @@
 #include <stop_token>
 #include <stdexcept>
 #include <string>
+#include <string_view>
+#include <utility>
 namespace moexwatch {
 struct Cancelled:std::runtime_error {Cancelled():std::runtime_error("Загрузка отменена") {}};
 struct NetworkFailure:std::runtime_error {

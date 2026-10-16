@@ -24,7 +24,7 @@ std::wstring widen(std::string_view text) {
 }
 std::string https_get(FetchContext& context,const std::wstring& path,const wchar_t* host=L"iss.moex.com") {
     check_cancelled(context.stop);
-    const auto ascii=[](std::wstring_view value){std::string text;text.reserve(value.size());for(const wchar_t c:value){if(c<0||c>127)throw ValidationFailure("Ожидался ASCII-адрес источника");text+=static_cast<char>(c);}return text;};
+    const auto ascii=[](std::wstring_view value){std::string text;text.reserve(value.size());for(const wchar_t c:value){if(static_cast<unsigned>(c)>127U)throw ValidationFailure("Ожидался ASCII-адрес источника");text+=static_cast<char>(c);}return text;};
     const auto hostname=ascii(host),endpoint=ascii(path);
     const std::string source=hostname=="iss.moex.com"?"moex":hostname=="smart-lab.ru"?"smartlab":"issuer";
     return get_with_retry({hostname,endpoint,source},context.transport,context.stop,context.log.get(),context.request).body;
