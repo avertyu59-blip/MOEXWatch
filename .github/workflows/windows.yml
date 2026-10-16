@@ -54,6 +54,6 @@ jobs:
       - name: Configure journal migration checks
         run: cmake -S . -B migration-build -DCMAKE_BUILD_TYPE=Release
       - name: Build journal migration tests
-        run: cmake --build migration-build --target portfolio_identity_tests io_runtime_tests storage_integration_tests storage_tests --parallel 2
+        run: cmake --build migration-build --target portfolio_identity_tests io_runtime_tests storage_integration_tests storage_tests app_storage_tests --parallel 2
       - name: Check journal identity and migration
-        run: ctest --test-dir migration-build -R "portfolio_identity_tests|io_runtime_tests|storage_integration_tests|storage_tests" --output-on-failure
+        run: ctest --test-dir migration-build -R "portfolio_identity_tests|io_runtime_tests|storage_integration_tests|storage_tests|app_storage_tests" --output-on-failure

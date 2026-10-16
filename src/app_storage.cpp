@@ -2,6 +2,8 @@
 
 #include "storage.hpp"
 
+#include <utility>
+
 namespace moexwatch {
 
 AppStorage::AppStorage(std::filesystem::path root) : root_(std::move(root)) {}
