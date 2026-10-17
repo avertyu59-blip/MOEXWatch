@@ -33,6 +33,11 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Qt deployment failed' }
           $qtRoot = Split-Path (Split-Path (Get-Command windeployqt).Source)
           Copy-Item "$qtRoot/plugins/platforms/qoffscreen.dll" qt-preview/platforms/
+          $vs = & "${env:ProgramFiles(x86)}/Microsoft Visual Studio/Installer/vswhere.exe" -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          $crt = Get-Item "$vs/VC/Redist/MSVC/*/x64/Microsoft.VC143.CRT" | Sort-Object FullName -Descending | Select-Object -First 1
+          if (-not $crt) { throw 'MSVC redistributable runtime directory was not found' }
+          Copy-Item "$($crt.FullName)/*.dll" qt-preview/
+          if (-not (Test-Path qt-preview/msvcp140.dll) -or -not (Test-Path qt-preview/vcruntime140.dll)) { throw 'MSVC runtime was not deployed' }
           Copy-Item docs/QT_PREVIEW.md qt-preview/README.md
           Copy-Item docs/QT_THIRD_PARTY.md qt-preview/
           New-Item -ItemType Directory -Path qt-preview/licenses | Out-Null

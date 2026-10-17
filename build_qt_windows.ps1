@@ -16,4 +16,9 @@ Copy-Item (Join-Path $PSScriptRoot 'build-qt/qt/Release/MOEXWatch-Qt.exe') $prev
 Copy-Item (Join-Path $PSScriptRoot 'build-qt/Release/moexwatch.exe') (Join-Path $preview 'MOEXWatch-Classic.exe')
 & (Join-Path $QtRoot 'bin/windeployqt.exe') --release --qmldir (Join-Path $PSScriptRoot 'qt/qml') --compiler-runtime (Join-Path $preview 'MOEXWatch-Qt.exe')
 if ($LASTEXITCODE -ne 0) { throw 'Deployment failed' }
+$vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+$vs = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+$crt = Get-Item "$vs\VC\Redist\MSVC\*\x64\Microsoft.VC143.CRT" | Sort-Object FullName -Descending | Select-Object -First 1
+if (-not $crt) { throw 'MSVC redistributable runtime directory was not found' }
+Copy-Item "$($crt.FullName)\*.dll" $preview
 Write-Host "Built: $preview\MOEXWatch-Qt.exe"
