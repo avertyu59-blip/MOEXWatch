@@ -1,6 +1,8 @@
 cmake_minimum_required(VERSION 3.20)
 project(MOEXWatch VERSION 0.6.8 LANGUAGES CXX)
 
+option(MOEX_BUILD_QT "Build the Qt Quick portfolio preview alongside the classic UI" OFF)
+
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -168,6 +170,10 @@ if(MSVC)
   target_compile_options(app_storage_tests PRIVATE /W4 /permissive- /utf-8)
 endif()
 add_test(NAME app_storage_tests COMMAND app_storage_tests)
+
+if(MOEX_BUILD_QT)
+  add_subdirectory(qt)
+endif()
 
 if(WIN32)
   add_executable(market_data_tests tests/market_data_tests.cpp)
