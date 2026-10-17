@@ -3,6 +3,7 @@ $ErrorActionPreference = 'Stop'
 if (-not (Test-Path (Join-Path $QtRoot 'lib/cmake/Qt6/Qt6Config.cmake'))) {
     throw 'Укажите каталог Qt 6.8.3 msvc2022_64, например C:\Qt\6.8.3\msvc2022_64'
 }
+$env:PATH = (Join-Path $QtRoot 'bin') + ';' + $env:PATH
 cmake -S $PSScriptRoot -B (Join-Path $PSScriptRoot 'build-qt') -G 'Visual Studio 17 2022' -A x64 "-DCMAKE_PREFIX_PATH=$QtRoot" -DMOEX_BUILD_QT=ON
 if ($LASTEXITCODE -ne 0) { throw 'Configuration failed' }
 cmake --build (Join-Path $PSScriptRoot 'build-qt') --config Release --parallel 2

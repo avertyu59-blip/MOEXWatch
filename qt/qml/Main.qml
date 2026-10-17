@@ -19,6 +19,7 @@ ApplicationWindow {
     palette.windowText: Theme.text
     palette.base: Theme.surface
     palette.text: Theme.text
+    palette.placeholderText: Theme.muted
     palette.button: Theme.raised
     palette.buttonText: Theme.text
     palette.highlight: Theme.accent

@@ -10,6 +10,7 @@ Dialog {
     parent: Overlay.overlay; anchors.centerIn: parent
     modal: true; title: "Уровни позиции · " + (selected.ticker || "")
     width: Math.min(440, parent.width - 32)
+    background: Surface { }
     onOpened: { selected=controller.position(positionId); stop.text=selected.stop || ""; take.text=selected.take || ""; controller.clearError() }
     contentItem: ColumnLayout {
         spacing: 12
@@ -21,6 +22,7 @@ Dialog {
         Label { text: dialog.controller.error; visible: text.length>0; color: Theme.negative; wrapMode: Text.WordWrap; Layout.fillWidth: true }
     }
     footer: DialogButtonBox {
+        spacing: 8; padding: 12
         ActionButton { text: "Сохранить"; primary: true; enabled: dialog.controller.writable; onClicked: { if(dialog.controller.saveLevels(dialog.positionId,stop.text,take.text)) dialog.close() } }
         ActionButton { text: "Отмена"; onClicked: dialog.close() }
     }

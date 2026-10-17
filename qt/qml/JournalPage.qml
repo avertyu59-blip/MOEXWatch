@@ -59,6 +59,7 @@ Surface {
         title: "Удаление операции"
         width: Math.min(480, parent.width - 32)
         height: Math.min(280, parent.height - 32)
+        background: Surface { }
         standardButtons: Dialog.Yes | Dialog.No
         contentItem: Label { text: root.selectedDescription + "\n\nУдаление может изменить остаток и границы позиции. Старые уровни останутся у прежнего ID. Продолжить?"; wrapMode: Text.WordWrap }
         onAccepted: { if(root.controller.deleteOperation(root.selectedId)) { root.selectedId = ""; root.selectedDescription = "" } }

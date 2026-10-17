@@ -28,6 +28,7 @@ int main(int argc,char* argv[]) {
     int errors=0;
     PortfolioController backend(root);
     if(smoke||demo)backend.loadDemo();
+    if(demo&&arguments.contains("--light"))backend.setDark(false);
     QQmlApplicationEngine engine;
     engine.rootContext()->setContextProperty("backend",&backend);
     QObject::connect(&engine,&QQmlApplicationEngine::warnings,&app,[&](const QList<QQmlError>& warnings){
@@ -43,15 +44,28 @@ int main(int argc,char* argv[]) {
         QTimer::singleShot(100,&app,[window,&backend]{window->resize(760,620);window->setProperty("pageIndex",1);backend.setDark(false);});
         QTimer::singleShot(200,&app,[window]{window->setProperty("pageIndex",2);});
         QTimer::singleShot(300,&app,[window,&backend]{window->resize(1440,920);window->setProperty("pageIndex",0);backend.setDark(true);});
-        QTimer::singleShot(400,&app,[window]{if(auto* dialog=window->findChild<QObject*>("operationDialog"))QMetaObject::invokeMethod(dialog,"open");});
+        QTimer::singleShot(400,&app,[window,&errors]{
+            auto* dialog=window->findChild<QObject*>("operationDialog");
+            if(!dialog||!QMetaObject::invokeMethod(dialog,"open"))++errors;
+        });
         QTimer::singleShot(500,&app,[window]{if(auto* dialog=window->findChild<QObject*>("operationDialog"))QMetaObject::invokeMethod(dialog,"close");});
-        QTimer::singleShot(600,&app,[window,&backend]{if(auto* dialog=window->findChild<QObject*>("levelsDialog")){
-            dialog->setProperty("positionId",backend.positions()->rows().first()["id"]);QMetaObject::invokeMethod(dialog,"open");}});
+        QTimer::singleShot(600,&app,[window,&backend,&errors]{
+            auto* dialog=window->findChild<QObject*>("levelsDialog");
+            if(!dialog){++errors;return;}
+            dialog->setProperty("positionId",backend.positions()->rows().first()["id"]);
+            if(!QMetaObject::invokeMethod(dialog,"open"))++errors;
+        });
         QTimer::singleShot(800,&app,[&]{app.exit(errors?4:0);});
     }
     const int screenshot=arguments.indexOf("--screenshot");
     if(screenshot>=0&&screenshot+1<arguments.size()) {
-        if(auto* window=qobject_cast<QQuickWindow*>(engine.rootObjects().first()))window->resize(1440,920);
+        if(auto* window=qobject_cast<QQuickWindow*>(engine.rootObjects().first())) {
+            window->resize(arguments.contains("--narrow")?760:1440,arguments.contains("--narrow")?620:920);
+            if(arguments.contains("--journal"))window->setProperty("pageIndex",1);
+            if(arguments.contains("--operation-dialog"))QTimer::singleShot(100,&app,[window]{
+                if(auto* dialog=window->findChild<QObject*>("operationDialog"))QMetaObject::invokeMethod(dialog,"open");
+            });
+        }
         const auto path=arguments[screenshot+1];
         QTimer::singleShot(800,&app,[&,path]{
             auto* window=qobject_cast<QQuickWindow*>(engine.rootObjects().first());

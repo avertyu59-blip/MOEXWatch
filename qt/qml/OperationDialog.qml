@@ -10,11 +10,13 @@ Dialog {
     modal: true; title: "Записать операцию"
     width: Math.min(460, parent.width - 32)
     height: Math.min(610, parent.height - 32)
+    background: Surface { }
     onOpened: { ticker.forceActiveFocus(); controller.clearError() }
     contentItem: ScrollView {
+        id: editorScroll
         clip: true
         ColumnLayout {
-            width: parent.width; spacing: 8
+            width: editorScroll.availableWidth; spacing: 8
             Label { text: "Дата · ГГГГ-ММ-ДД" }
             TextField { id: date; objectName: "operationDate"; text: Qt.formatDate(new Date(),"yyyy-MM-dd"); Layout.fillWidth: true; Accessible.name: "Дата операции" }
             Label { text: "Тикер" }
@@ -31,6 +33,7 @@ Dialog {
         }
     }
     footer: DialogButtonBox {
+        spacing: 8; padding: 12
         ActionButton {
             objectName: "saveOperationButton"; text: "Записать"; primary: true; enabled: dialog.controller.writable
             onClicked: {
