@@ -27,7 +27,7 @@ Surface {
                 Connections { target: root.controller; function onChanged() { ring.requestPaint() } }
                 Connections { target: Theme; function onDarkChanged() { ring.requestPaint() } }
             }
-            Text { anchors.centerIn: parent; width: 140; text: root.controller.allocation.length ? root.controller.totals.value : "Нет оценки"; wrapMode: Text.WordWrap; horizontalAlignment: Text.AlignHCenter; color: Theme.text; font.family: Theme.family; font.pixelSize: 18; font.weight: Font.DemiBold }
+            Text { anchors.centerIn: parent; width: 128; height: 40; text: root.controller.allocation.length ? root.controller.totals.value : "Нет оценки"; fontSizeMode: Text.Fit; minimumPixelSize: 10; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter; color: Theme.text; font.family: Theme.family; font.pixelSize: 18; font.weight: Font.DemiBold }
         }
         Text { visible: root.controller.allocation.length === 0; text: "Для долей нужны свежие котировки всех открытых позиций."; color: Theme.muted; Layout.fillWidth: true; wrapMode: Text.WordWrap; font.pixelSize: 13 }
         Repeater {

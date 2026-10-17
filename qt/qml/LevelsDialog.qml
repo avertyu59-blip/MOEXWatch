@@ -3,6 +3,7 @@ import QtQuick.Controls
 import QtQuick.Layouts
 Dialog {
     id: dialog
+    objectName: "levelsDialog"
     required property var controller
     property string positionId
     property var selected: ({})

@@ -83,7 +83,7 @@ private:
     std::shared_ptr<moexwatch::CompletionMailbox> mailbox_{std::make_shared<moexwatch::CompletionMailbox>()};
     std::unique_ptr<QLockFile> lock_;
     std::unique_ptr<QSettings> settings_;
-    QTimer timer_;
+    QTimer timer_, freshness_timer_;
     bool persist(moexwatch::PortfolioJournal candidate);
     void fail(QString text, bool blockWrites = false);
     void rebuild();

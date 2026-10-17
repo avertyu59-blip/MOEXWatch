@@ -3,6 +3,7 @@ import QtQuick.Controls
 import QtQuick.Layouts
 Dialog {
     id: dialog
+    objectName: "operationDialog"
     required property var controller
     parent: Overlay.overlay
     anchors.centerIn: parent

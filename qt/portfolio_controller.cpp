@@ -23,13 +23,6 @@ std::optional<double> parse(QString value) {
     if(error!=std::errc{}||end!=bytes.data()+bytes.size()||!std::isfinite(result))return {};
     return result;
 }
-std::filesystem::path nativePath(const QString& value) {
-#ifdef _WIN32
-    return value.toStdWString();
-#else
-    return value.toStdString();
-#endif
-}
 QString pathText(const std::filesystem::path& path) {
 #ifdef _WIN32
     return QString::fromStdWString(path.wstring());
@@ -75,10 +68,11 @@ PortfolioController::PortfolioController(std::filesystem::path root,Fetch fetch,
         };
     }
     connect(&timer_,&QTimer::timeout,this,&PortfolioController::drain);timer_.start(50);
+    connect(&freshness_timer_,&QTimer::timeout,this,&PortfolioController::rebuild);freshness_timer_.start(60000);
     rebuild();
 }
 PortfolioController::~PortfolioController(){shutdown();}
-void PortfolioController::shutdown(){if(closed_)return;closed_=true;timer_.stop();mailbox_->close();tasks_.shutdown();active_request_=0;}
+void PortfolioController::shutdown(){if(closed_)return;closed_=true;timer_.stop();freshness_timer_.stop();mailbox_->close();tasks_.shutdown();active_request_=0;}
 void PortfolioController::fail(QString message,bool blockWrites){error_=std::move(message);if(blockWrites)writable_=false;emit changed();}
 void PortfolioController::clearError(){error_.clear();emit changed();}
 void PortfolioController::setDark(bool value) {
@@ -96,6 +90,7 @@ QStringList PortfolioController::tickers() const {
 }
 bool PortfolioController::persist(PortfolioJournal candidate) {
     if(!writable_){fail("Запись заблокирована. Сначала восстановите профиль из резервной копии.");return false;}
+    if(!valid_portfolio_journal(candidate)){fail("Изменение нарушает связи операций и уровней позиции; журнал не изменён.");return false;}
     try{storage_.save_portfolio(candidate);journal_=std::move(candidate);error_.clear();rebuild();return true;}
     catch(const std::exception& ex){fail("Журнал не изменён: "+text(ex.what()),true);return false;}
 }
@@ -226,9 +221,9 @@ void PortfolioController::drain(){
             status_="Котировки: "+QString::number(fresh)+" / "+QString::number(instruments_.size())+" · проверка "+QTime::currentTime().toString("HH:mm:ss");
             if(fresh==0)error_="MOEX не вернул актуальные котировки. История и операции сохранены.";
             rebuild();
-        }else if(auto* result=std::get_if<BackupResult>(&event.data)) {
-            if(!result->error.empty())fail("Резервная копия: "+text(result->error));
-            else if(!result->cancelled)status_="Копия создана: "+pathText(result->path);
+        }else if(auto* backupResult=std::get_if<BackupResult>(&event.data)) {
+            if(!backupResult->error.empty())fail("Резервная копия: "+text(backupResult->error));
+            else if(!backupResult->cancelled)status_="Копия создана: "+pathText(backupResult->path);
             emit changed();
         }else if(auto* failure=std::get_if<TaskFailure>(&event.data)) {
             if(failure->kind==TaskKind::Market&&active_request_!=0&&event.request==active_request_) {

@@ -20,7 +20,7 @@ Button {
     contentItem: Text {
         text: control.text
         font: control.font
-        color: !control.enabled ? Theme.muted : control.primary ? Theme.onAccent : control.destructive ? Theme.negative : Theme.text
+        color: !control.enabled ? Theme.muted : control.primary ? Theme.textOnAccent : control.destructive ? Theme.negative : Theme.text
         horizontalAlignment: Text.AlignHCenter
         verticalAlignment: Text.AlignVCenter
     }

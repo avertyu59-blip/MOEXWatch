@@ -22,7 +22,7 @@ ApplicationWindow {
     palette.button: Theme.raised
     palette.buttonText: Theme.text
     palette.highlight: Theme.accent
-    palette.highlightedText: Theme.onAccent
+    palette.highlightedText: Theme.textOnAccent
     Component.onCompleted: Theme.dark=backend.dark
     Connections { target: backend; function onChanged() { Theme.dark=backend.dark } }
     onClosing: backend.shutdown()

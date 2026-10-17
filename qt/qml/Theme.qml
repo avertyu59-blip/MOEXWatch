@@ -9,7 +9,7 @@ QtObject {
     readonly property color muted: dark ? "#acb9c7" : "#4f6074"
     readonly property color border: dark ? "#314151" : "#c5cfdb"
     readonly property color accent: "#1762c0"
-    readonly property color onAccent: "#ffffff"
+    readonly property color textOnAccent: "#ffffff"
     readonly property color selection: dark ? "#16395c" : "#d6e7fc"
     readonly property color positive: dark ? "#56c979" : "#147741"
     readonly property color negative: dark ? "#ff6975" : "#bc2a3b"
