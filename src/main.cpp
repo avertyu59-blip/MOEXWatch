@@ -14,10 +14,10 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
     dividend_wc.lpszClassName = L"MOEXWatchDividendWindow";
     if (!RegisterClassExW(&dividend_wc)) return 1;
     HWND window = CreateWindowExW(0, wc.lpszClassName, L"MOEX Watch 0.6.8 — аналитика и портфель", WS_OVERLAPPEDWINDOW,
-                                  CW_USEDEFAULT, CW_USEDEFAULT, 1340, 870, nullptr, nullptr, instance, &app);
+                                  CW_USEDEFAULT, CW_USEDEFAULT, 1500, 1000, nullptr, nullptr, instance, &app);
     if (!window) return 2;
     ShowWindow(window, show); UpdateWindow(window);
-    MSG msg{}; while (GetMessageW(&msg, nullptr, 0, 0) > 0) { TranslateMessage(&msg); DispatchMessageW(&msg); }
+    MSG msg{}; while (GetMessageW(&msg, nullptr, 0, 0) > 0) { if(!IsDialogMessageW(window,&msg)) { TranslateMessage(&msg); DispatchMessageW(&msg); } }
     return static_cast<int>(msg.wParam);
 }
 

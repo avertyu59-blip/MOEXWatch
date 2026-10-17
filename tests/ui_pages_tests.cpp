@@ -180,6 +180,7 @@ int main(){try{
     SelectObject(dc,old_font);SelectObject(dc,old_bitmap);DeleteObject(surface);DeleteDC(dc);
     const std::vector<std::vector<HWND>*> pages={&app.charts_page.market_controls,&app.trades_page.controls,&app.portfolio_page.controls,&app.signals_page.controls,&app.backtest_page.controls};
     std::set<HWND> tracked{app.shell.tabs,app.shell.backup_button,app.signals_page.observation_page};
+    tracked.insert(app.shell.navigation.begin(),app.shell.navigation.end());
     for(const auto* page:pages)tracked.insert(page->begin(),page->end());
     tracked.insert(app.shell.global_controls.begin(),app.shell.global_controls.end());
     for(HWND child=GetWindow(app.shell.window,GW_CHILD);child;child=GetWindow(child,GW_HWNDNEXT))check(tracked.contains(child),"every root control has an explicit owner");
@@ -190,6 +191,23 @@ int main(){try{
         check((GetWindowLongPtrW(GetDlgItem(app.shell.window,ID_REFRESH),GWL_STYLE)&WS_VISIBLE)!=0,"refresh stays visible on every page");
         app.handle_window_message(app.shell.window,WM_SIZE,0,MAKELPARAM(1164,720));
     }
+    app.layout_workspace(1348,861);
+    const auto initial_layout=relative(app.portfolio_page.positions,app.shell.window);
+    app.layout_workspace(1600,1000);app.layout_workspace(1348,861);
+    const auto restored_layout=relative(app.portfolio_page.positions,app.shell.window);
+    check(EqualRect(&initial_layout,&restored_layout)!=FALSE,"workspace resizing does not accumulate sidebar or card offsets");
+    check(restored_layout.left>=theme::sidebar&&restored_layout.right<=1348,"positions remain within workspace");
+    check(relative(app.signals_page.recent_events,app.shell.window).bottom<=861,"recent history fits minimum workspace height");
+    for(int page=0;page<6;++page){
+        app.handle_window_message(app.shell.window,WM_COMMAND,MAKEWPARAM(theme::navigation_first+page,BN_CLICKED),0);
+        check(app.shell.active_page==page&&TabCtrl_GetCurSel(app.shell.tabs)==page,"sidebar dispatches the real page command");
+    }
+    const auto original_theme=app.shell.dark_theme;
+    app.handle_window_message(app.shell.window,WM_COMMAND,MAKEWPARAM(theme::toggle,BN_CLICKED),0);
+    check(app.shell.dark_theme!=original_theme&&app.shell.active_page==5,"theme toggle preserves current page");
+    app.handle_window_message(app.shell.window,WM_COMMAND,MAKEWPARAM(theme::toggle,BN_CLICKED),0);
+    app.fill_recent_events();
+    check(ListView_GetItemCount(app.signals_page.recent_events)==static_cast<int>(std::min<std::size_t>(100,app.signals_page.history.size())),"signal panel shows recorded events rather than sample data");
     check(!app.command_charts(MAKEWPARAM(ID_BACKTEST_RUN,0)),"charts do not consume backtest command");
     // A refresh is applied by ticker while another page is active; the user target wins.
     const auto selected_before_refresh=app.charts_page.selection.ticker;
@@ -219,9 +237,15 @@ int main(){try{
     app.tasks.start(TaskKind::Market,app.mailbox,[&](std::stop_token)->BackgroundEvent {auto data=MarketRefreshResult{};auto item=cancel_item;item.quote.last=1;data.instruments.push_back(item);queued.set_value();return {*cancel_request,std::move(data)};});
     queued.get_future().wait();app.tasks.shutdown();app.cancel_loading();app.drain_completions();
     check(!app.state.market.refreshing()&&app.state.market.instruments[0].quote.last==191,"cancelled queued result cannot replace current quote");
-    app.handle_window_message(app.shell.window,WM_SIZE,0,MAKELPARAM(1164,720));
-    const auto tabs_rect=relative(app.shell.tabs,app.shell.window),cancel_rect=relative(app.shell.cancel_loading,app.shell.window),log_rect=relative(app.shell.diagnostics,app.shell.window),backup_rect=relative(app.shell.backup_button,app.shell.window);
-    check(tabs_rect.right<=cancel_rect.left&&cancel_rect.right<=log_rect.left&&log_rect.right<=backup_rect.left,"global actions do not overlap at minimum width");
+    app.handle_window_message(app.shell.window,WM_SIZE,0,MAKELPARAM(1348,861));
+    const HWND actions[]={app.shell.cancel_loading,app.shell.diagnostics,app.shell.backup_button,GetDlgItem(app.shell.window,ID_REFRESH)};
+    for(std::size_t i=0;i<std::size(actions);++i) {
+        const auto r=relative(actions[i],app.shell.window);
+        check(r.left>=0&&r.top>=0&&r.right<=1348&&r.bottom<=861,"global action fits minimum workspace");
+        for(std::size_t j=i+1;j<std::size(actions);++j){const auto other=relative(actions[j],app.shell.window);RECT overlap{};
+            check(!IntersectRect(&overlap,&r,&other),"global actions do not overlap at minimum width");}
+    }
+    check((GetWindowLongPtrW(app.shell.tabs,GWL_STYLE)&WS_VISIBLE)==0,"legacy tab model stays hidden behind sidebar navigation");
     // Real Win32 views consume domain results; no provider requests or account writes.
     app.trades_page.records={{"SBER",10,100,120,10,13},{"SBER",5,120,100,5,13}};
     app.fill_trades();

@@ -137,6 +137,7 @@ void Application::notify_new_signals() {
         app_storage.atomic_write("signal_history.csv",serialize_signal_history(signals_page.history));signals_page.history_dirty=false;signals_page.observation_error.clear();
     }catch(const std::exception& ex){signals_page.observation_error=std::string("Новые события пока только в памяти: ")+ex.what();}
     refresh_observation_page(signals_page.observation_page);
+    fill_recent_events();
     if (!signals_page.settings.notifications_enabled || newly_matched.empty()) return;
     if (signals_page.notification_icon_ready) {
         std::wstring message;
@@ -170,34 +171,36 @@ void Application::load_observations() {
     try{if(const auto bytes=app_storage.read_text("price_alerts.csv"))signals_page.observer.configure(parse_price_alerts(*bytes));}catch(const std::exception& ex){failed(ex);}
     try{if(const auto bytes=app_storage.read_text("signal_history.csv"))signals_page.history=parse_signal_history(*bytes);}catch(const std::exception& ex){failed(ex);}
     refresh_observation_page(signals_page.observation_page);
+    fill_recent_events();
 }
 
 void Application::create_signals_controls(HWND window) {
-    add_control(signals_page.controls,window, L"BUTTON", L"RSI ниже", BS_AUTOCHECKBOX, 16, 59, 100, 28, ID_SIG_OVERSOLD);
-    add_control(signals_page.controls,window, L"EDIT", L"", WS_BORDER | ES_AUTOHSCROLL, 120, 55, 65, 28, ID_SIG_OVERSOLD_VALUE);
+    add_control(signals_page.controls,window,L"STATIC",L"Технические условия",0,24,60,288,28,0);
+    add_control(signals_page.controls,window, L"BUTTON", L"RSI ниже", BS_AUTOCHECKBOX, 24, 100, 150, 32, ID_SIG_OVERSOLD);
+    add_control(signals_page.controls,window, L"EDIT", L"", WS_BORDER | ES_AUTOHSCROLL, 240, 100, 72, 32, ID_SIG_OVERSOLD_VALUE);
     signals_page.oversold_value = GetDlgItem(window, ID_SIG_OVERSOLD_VALUE);
-    add_control(signals_page.controls,window, L"BUTTON", L"RSI выше", BS_AUTOCHECKBOX, 215, 59, 100, 28, ID_SIG_OVERBOUGHT);
-    add_control(signals_page.controls,window, L"EDIT", L"", WS_BORDER | ES_AUTOHSCROLL, 319, 55, 65, 28, ID_SIG_OVERBOUGHT_VALUE);
+    add_control(signals_page.controls,window, L"BUTTON", L"RSI выше", BS_AUTOCHECKBOX, 24, 144, 150, 32, ID_SIG_OVERBOUGHT);
+    add_control(signals_page.controls,window, L"EDIT", L"", WS_BORDER | ES_AUTOHSCROLL, 240, 144, 72, 32, ID_SIG_OVERBOUGHT_VALUE);
     signals_page.overbought_value = GetDlgItem(window, ID_SIG_OVERBOUGHT_VALUE);
-    add_control(signals_page.controls,window, L"BUTTON", L"Цена выше SMA200", BS_AUTOCHECKBOX, 16, 97, 175, 28, ID_SIG_SMA);
-    add_control(signals_page.controls,window, L"BUTTON", L"Цена рядом с целью", BS_AUTOCHECKBOX, 205, 97, 185, 28, ID_SIG_TARGET);
-    add_control(signals_page.controls,window, L"EDIT", L"", WS_BORDER | ES_AUTOHSCROLL, 397, 95, 65, 28, ID_SIG_TARGET_VALUE);
+    add_control(signals_page.controls,window, L"BUTTON", L"Цена выше SMA200", BS_AUTOCHECKBOX, 24, 188, 288, 32, ID_SIG_SMA);
+    add_control(signals_page.controls,window, L"BUTTON", L"Цена рядом с целью", BS_AUTOCHECKBOX, 24, 232, 204, 32, ID_SIG_TARGET);
+    add_control(signals_page.controls,window, L"EDIT", L"", WS_BORDER | ES_AUTOHSCROLL, 240, 232, 52, 32, ID_SIG_TARGET_VALUE);
     signals_page.target_value = GetDlgItem(window, ID_SIG_TARGET_VALUE);
-    add_control(signals_page.controls,window, L"STATIC", L"%", 0, 466, 98, 20, 24, 0);
-    add_control(signals_page.controls,window, L"STATIC", L"Совпадение", 0, 495, 98, 90, 24, 0);
-    add_control(signals_page.controls,window, L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_VSCROLL, 585, 94, 135, 100, ID_SIG_MODE);
+    add_control(signals_page.controls,window, L"STATIC", L"%", 0, 296, 236, 20, 24, 0);
+    add_control(signals_page.controls,window, L"STATIC", L"Совпадение", 0, 24, 280, 100, 24, 0);
+    add_control(signals_page.controls,window, L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_VSCROLL, 152, 276, 160, 140, ID_SIG_MODE);
     SendMessageW(GetDlgItem(window, ID_SIG_MODE), CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Любое условие"));
     SendMessageW(GetDlgItem(window, ID_SIG_MODE), CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Все условия"));
-    add_control(signals_page.controls,window, L"BUTTON", L"Всплывающие уведомления", BS_AUTOCHECKBOX, 738, 97, 240, 28, ID_SIG_NOTIFY);
-    add_control(signals_page.controls,window, L"BUTTON", L"Сохранить условия", BS_PUSHBUTTON, 990, 95, 145, 28, ID_SIG_SAVE);
-    add_control(signals_page.controls,window, L"BUTTON", L"Автообновление", BS_AUTOCHECKBOX, 16, 135, 155, 28, ID_SIG_AUTO_REFRESH);
-    add_control(signals_page.controls,window, L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_VSCROLL, 176, 132, 135, 100, ID_SIG_INTERVAL);
+    add_control(signals_page.controls,window, L"BUTTON", L"Всплывающие уведомления", BS_AUTOCHECKBOX, 24, 332, 288, 32, ID_SIG_NOTIFY);
+    add_control(signals_page.controls,window, L"BUTTON", L"Сохранить условия", BS_PUSHBUTTON, 24, 480, 288, 36, ID_SIG_SAVE);
+    add_control(signals_page.controls,window, L"BUTTON", L"Автообновление", BS_AUTOCHECKBOX, 24, 376, 288, 32, ID_SIG_AUTO_REFRESH);
+    add_control(signals_page.controls,window, L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_VSCROLL, 24, 420, 288, 140, ID_SIG_INTERVAL);
     signals_page.interval = GetDlgItem(window, ID_SIG_INTERVAL);
     const wchar_t* interval_names[] = {L"15 минут", L"30 минут", L"60 минут"};
     for (const auto* interval : interval_names)
         SendMessageW(signals_page.interval, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(interval));
     add_control(signals_page.controls,window, L"STATIC", L"Проверка работает, пока приложение открыто; уведомления появляются при новых совпадениях.",
-                0, 326, 137, 800, 22, 0);
+                0, 24, 536, 288, 80, 0);
     signals_page.summary = CreateWindowExW(0, L"STATIC", L"", WS_CHILD | WS_VISIBLE | SS_LEFT, 16, 170, 1200, 25, window,
                                        reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_SIG_SUMMARY)), GetModuleHandleW(nullptr), nullptr);
     if (shell.font) SendMessageW(signals_page.summary, WM_SETFONT, reinterpret_cast<WPARAM>(shell.font), TRUE);
@@ -211,6 +214,28 @@ void Application::create_signals_controls(HWND window) {
     for (int i = 0; i < 6; ++i) { LVCOLUMNW col{}; col.mask = LVCF_TEXT | LVCF_WIDTH; col.pszText = const_cast<wchar_t*>(signal_headers[i]); col.cx = signal_widths[i]; ListView_InsertColumn(signals_page.list, i, &col); }
     if (shell.font) SendMessageW(signals_page.list, WM_SETFONT, reinterpret_cast<WPARAM>(shell.font), TRUE);
 
+    add_control(signals_page.controls,window,L"STATIC",L"Последние сигналы · полная история — в меню слева",0,360,372,760,28,0);
+    signals_page.recent_events=CreateWindowExW(WS_EX_CLIENTEDGE,WC_LISTVIEWW,L"Последние сигналы",WS_CHILD|WS_VISIBLE|LVS_REPORT|LVS_SINGLESEL,
+        360,412,760,300,window,reinterpret_cast<HMENU>(static_cast<INT_PTR>(1110)),GetModuleHandleW(nullptr),nullptr);
+    signals_page.controls.push_back(signals_page.recent_events);
+    ListView_SetExtendedListViewStyle(signals_page.recent_events,LVS_EX_FULLROWSELECT|LVS_EX_DOUBLEBUFFER);
+    const wchar_t* event_headers[]={L"Время обнаружения",L"Тикер",L"Условие",L"Цена, ₽"};
+    const int event_widths[]={185,85,330,110};
+    for(int i=0;i<4;++i){LVCOLUMNW col{};col.mask=LVCF_TEXT|LVCF_WIDTH;col.pszText=const_cast<wchar_t*>(event_headers[i]);col.cx=event_widths[i];ListView_InsertColumn(signals_page.recent_events,i,&col);}
+
+}
+
+void Application::fill_recent_events() {
+    if(!signals_page.recent_events)return;
+    ListView_DeleteAllItems(signals_page.recent_events);
+    const auto count=std::min<std::size_t>(signals_page.history.size(),100);
+    for(std::size_t i=0;i<count;++i) {
+        const auto& event=signals_page.history[signals_page.history.size()-1-i];
+        auto stamp=widen(event.detected_at);LVITEMW row{};row.mask=LVIF_TEXT;row.iItem=static_cast<int>(i);row.pszText=stamp.data();
+        ListView_InsertItem(signals_page.recent_events,&row);
+        const std::string values[]={event.ticker,event.condition,money(event.price)};
+        for(int col=1;col<=3;++col){auto text=widen(values[col-1]);ListView_SetItemText(signals_page.recent_events,static_cast<int>(i),col,text.data());}
+    }
 }
 
 void Application::create_observation_controls(HWND window) {
@@ -229,9 +254,10 @@ void Application::create_observation_controls(HWND window) {
 }
 
 void Application::resize_signals(int width, int height) {
+    if(signals_page.recent_events)MoveWindow(signals_page.recent_events,360,412,width-376,std::max(100,height-432),TRUE);
     (void)height;
-        if (signals_page.summary) MoveWindow(signals_page.summary, 16, 170, width - 32, 25, TRUE);
-        if (signals_page.list) MoveWindow(signals_page.list, 16, 202, width - 32, height - 222, TRUE);
+        if (signals_page.summary) MoveWindow(signals_page.summary, 360, 64, width - 376, 32, TRUE);
+        if (signals_page.list) MoveWindow(signals_page.list, 360, 108, width - 376, 248, TRUE);
 }
 
 bool Application::command_signals(WPARAM wparam) {

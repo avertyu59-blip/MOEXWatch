@@ -115,6 +115,7 @@ void Application::fill_portfolio() {
         (allocation_fresh ? L"   Стоимость: " : L"   Стоимость оценённых позиций*: ") + widen(money(portfolio->total_market_value)) + L" ₽" +
         L"   Бумажная прибыль: " + widen(money(portfolio->total_unrealized_profit)) + L" ₽" +
         L"   Зафиксировано: " + widen(money(portfolio->total_realized_profit)) + (allocation_fresh ? L" ₽" : L" ₽ (* — неполная/устаревшая оценка; доли н/д)");
+    InvalidateRect(shell.window,nullptr,FALSE);
     SetWindowTextW(portfolio_page.summary, (summary+L"   Несопоставленных уровней: "+std::to_wstring(portfolio_page.unresolved_levels.size())).c_str());
 }
 
