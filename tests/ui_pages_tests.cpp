@@ -237,9 +237,15 @@ int main(){try{
     app.tasks.start(TaskKind::Market,app.mailbox,[&](std::stop_token)->BackgroundEvent {auto data=MarketRefreshResult{};auto item=cancel_item;item.quote.last=1;data.instruments.push_back(item);queued.set_value();return {*cancel_request,std::move(data)};});
     queued.get_future().wait();app.tasks.shutdown();app.cancel_loading();app.drain_completions();
     check(!app.state.market.refreshing()&&app.state.market.instruments[0].quote.last==191,"cancelled queued result cannot replace current quote");
-    app.handle_window_message(app.shell.window,WM_SIZE,0,MAKELPARAM(1164,720));
-    const auto tabs_rect=relative(app.shell.tabs,app.shell.window),cancel_rect=relative(app.shell.cancel_loading,app.shell.window),log_rect=relative(app.shell.diagnostics,app.shell.window),backup_rect=relative(app.shell.backup_button,app.shell.window);
-    check(tabs_rect.right<=cancel_rect.left&&cancel_rect.right<=log_rect.left&&log_rect.right<=backup_rect.left,"global actions do not overlap at minimum width");
+    app.handle_window_message(app.shell.window,WM_SIZE,0,MAKELPARAM(1348,861));
+    const HWND actions[]={app.shell.cancel_loading,app.shell.diagnostics,app.shell.backup_button,GetDlgItem(app.shell.window,ID_REFRESH)};
+    for(std::size_t i=0;i<std::size(actions);++i) {
+        const auto r=relative(actions[i],app.shell.window);
+        check(r.left>=0&&r.top>=0&&r.right<=1348&&r.bottom<=861,"global action fits minimum workspace");
+        for(std::size_t j=i+1;j<std::size(actions);++j){const auto other=relative(actions[j],app.shell.window);RECT overlap{};
+            check(!IntersectRect(&overlap,&r,&other),"global actions do not overlap at minimum width");}
+    }
+    check((GetWindowLongPtrW(app.shell.tabs,GWL_STYLE)&WS_VISIBLE)==0,"legacy tab model stays hidden behind sidebar navigation");
     // Real Win32 views consume domain results; no provider requests or account writes.
     app.trades_page.records={{"SBER",10,100,120,10,13},{"SBER",5,120,100,5,13}};
     app.fill_trades();
