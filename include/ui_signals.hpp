@@ -14,6 +14,7 @@ struct SignalsState {
     bool updating{};
     HWND observation_page{};
     HWND list{};
+    HWND recent_events{};
     HWND summary{};
     HWND oversold_value{};
     HWND overbought_value{};

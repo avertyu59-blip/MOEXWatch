@@ -200,10 +200,11 @@ void Application::create_charts_controls(HWND window) {
 }
 
 void Application::resize_charts(int width, int height) {
-    (void)height;
-        if (charts_page.list) MoveWindow(charts_page.list, 16, 184, std::max(360, width * 44 / 100), height - 204, TRUE);
-        if (charts_page.analysis) MoveWindow(charts_page.analysis, width * 46 / 100, 184, width * 52 / 100 - 16, 245, TRUE);
-        if (charts_page.chart_tabs) MoveWindow(charts_page.chart_tabs, width * 46 / 100, 435, width - width * 46 / 100 - 16, 30, TRUE);
+    const int details=300;
+    const int chart_width=width-details-48;
+    if(charts_page.list)MoveWindow(charts_page.list,16,height-190,chart_width,170,TRUE);
+    if(charts_page.analysis)MoveWindow(charts_page.analysis,width-details-16,184,details,height-204,TRUE);
+    if(charts_page.chart_tabs)MoveWindow(charts_page.chart_tabs,16,184,chart_width,32,TRUE);
 }
 bool Application::command_charts(WPARAM wparam) {
     switch(LOWORD(wparam)) {
@@ -246,7 +247,7 @@ bool Application::notify_charts(LPARAM lparam) {
 }
 
 void Application::paint_charts(HDC dc,RECT client) {
-            RECT chart{client.left + client.right * 46 / 100, 475, client.right - 16, client.bottom - 20};
+            RECT chart{16, 228, client.right - 332, client.bottom - 206};
             const auto old_font = SelectObject(dc, shell.font);
             draw_chart(dc, chart, charts_page.visible.empty()?state.market.instruments.size():chart_instrument_index(), charts_page.chart_panel, charts_page.chart_sessions);
             SelectObject(dc, old_font);

@@ -15,7 +15,9 @@ HWND Application::create_chart_tabs(HWND parent, int id, int x, int y, int width
 }
 
 void Application::draw_chart(HDC dc, RECT area, std::size_t instrument_index, ChartPanel panel, int sessions) {
-    FillRect(dc, &area, reinterpret_cast<HBRUSH>(COLOR_WINDOW + 1));
+    const auto colors=theme::colors(shell.dark_theme);
+    const auto background=CreateSolidBrush(colors.surface);FillRect(dc,&area,background);DeleteObject(background);
+    SetTextColor(dc,colors.text);
     SetBkMode(dc, TRANSPARENT);
     if (instrument_index >= state.market.instruments.size() || state.market.instruments[instrument_index].candles.empty()) {
         DrawTextW(dc, L"Нет данных для графика. Выберите акцию и нажмите «Обновить».", -1,
@@ -42,8 +44,8 @@ void Application::draw_chart(HDC dc, RECT area, std::size_t instrument_index, Ch
         return static_cast<int>(plot.left + (static_cast<double>(i - first) + 0.5) *
             static_cast<double>(plot.right - plot.left) / static_cast<double>(shown));
     };
-    const COLORREF blue = RGB(34, 105, 181), orange = RGB(232, 139, 43), purple = RGB(135, 73, 170);
-    const COLORREF gray = RGB(85, 95, 110);
+    const COLORREF blue = colors.accent, orange = colors.warning, purple = colors.purple;
+    const COLORREF gray = colors.muted;
     std::vector<std::optional<double>> primary, secondary, sma20, sma50, sma200;
     std::optional<PortfolioPosition> position;
     const PositionLevels* position_levels = nullptr;
@@ -117,7 +119,7 @@ void Application::draw_chart(HDC dc, RECT area, std::size_t instrument_index, Ch
         maximum = 100.0;
         text(area.left + 4, area.top + 22, "Ниже 30: перепроданность | выше 70: перекупленность", gray);
     }
-    text(area.left + 4, area.top, heading, RGB(40, 50, 65));
+    text(area.left + 4, area.top, heading, colors.text);
     if (panel == ChartPanel::Price || panel == ChartPanel::Comparison) {
         const double padding = std::max((maximum - minimum) * 0.07, std::max(std::abs(maximum) * 0.001, 0.01));
         minimum -= padding; maximum += padding;
@@ -129,12 +131,12 @@ void Application::draw_chart(HDC dc, RECT area, std::size_t instrument_index, Ch
     if (panel == ChartPanel::Rsi) {
         RECT high_band{plot.left, plot.top, plot.right, y_at(70.0)};
         RECT low_band{plot.left, y_at(30.0), plot.right, plot.bottom};
-        HBRUSH high_brush = CreateSolidBrush(RGB(255, 235, 236));
-        HBRUSH low_brush = CreateSolidBrush(RGB(230, 247, 239));
+        HBRUSH high_brush = CreateSolidBrush(colors.raised);
+        HBRUSH low_brush = CreateSolidBrush(colors.raised);
         FillRect(dc, &high_band, high_brush); FillRect(dc, &low_band, low_brush);
         DeleteObject(high_brush); DeleteObject(low_brush);
     }
-    HPEN grid = CreatePen(PS_SOLID, 1, RGB(225, 231, 238));
+    HPEN grid = CreatePen(PS_SOLID, 1, colors.border);
     HGDIOBJ old_pen = SelectObject(dc, grid);
     const double rsi_levels[] = {0.0, 30.0, 50.0, 70.0, 100.0};
     for (int k = 0; k <= 4; ++k) {
@@ -166,7 +168,7 @@ void Application::draw_chart(HDC dc, RECT area, std::size_t instrument_index, Ch
         for (std::size_t i = first; i < count; ++i) {
             const auto& candle = candles[i];
             const bool spike = panel == ChartPanel::Volume && secondary[i] && *secondary[i] > 2.0;
-            const COLORREF color = spike ? orange : (candle.close >= candle.open ? RGB(29, 144, 100) : RGB(207, 66, 78));
+            const COLORREF color = spike ? orange : (candle.close >= candle.open ? colors.positive : colors.negative);
             HPEN pen = CreatePen(PS_SOLID, 1, color); HBRUSH brush = CreateSolidBrush(color);
             HGDIOBJ previous_pen = SelectObject(dc, pen), previous_brush = SelectObject(dc, brush);
             const int x = x_at(i);
@@ -192,16 +194,16 @@ void Application::draw_chart(HDC dc, RECT area, std::size_t instrument_index, Ch
         };
         if (position) {
             draw_level(position->average_entry_price, "Средняя", gray);
-            if (position_levels && position_levels->stop_loss) draw_level(*position_levels->stop_loss, "Стоп", RGB(200, 55, 65));
-            if (position_levels && position_levels->take_profit) draw_level(*position_levels->take_profit, "Тейк", RGB(25, 135, 90));
+            if (position_levels && position_levels->stop_loss) draw_level(*position_levels->stop_loss, "Стоп", colors.negative);
+            if (position_levels && position_levels->take_profit) draw_level(*position_levels->take_profit, "Тейк", colors.positive);
         }
-        HPEN event_pen = CreatePen(PS_DOT, 1, RGB(190, 91, 40)); old_pen = SelectObject(dc, event_pen);
+        HPEN event_pen = CreatePen(PS_DOT, 1, colors.warning); old_pen = SelectObject(dc, event_pen);
         for (const auto& event : item.dividends) {
             if (event.status == DividendStatus::Cancelled || event.verification == DividendVerification::Conflict) continue;
             for (std::size_t i = first; i < count; ++i) {
                 if (candles[i].date.substr(0, 10) != event.record_date) continue;
                 const int x = x_at(i); MoveToEx(dc, x, plot.top, nullptr); LineTo(dc, x, plot.bottom);
-                text(x + 3, plot.top + 2, event.status == DividendStatus::Forecast ? "D?" : "D", RGB(160, 80, 30)); break;
+                text(x + 3, plot.top + 2, event.status == DividendStatus::Forecast ? "D?" : "D", colors.warning); break;
             }
         }
         SelectObject(dc, old_pen); DeleteObject(event_pen);

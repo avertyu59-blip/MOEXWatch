@@ -4,6 +4,7 @@
 #include "app_storage.hpp"
 #include "async_tasks.hpp"
 #include "ui_shell_state.hpp"
+#include "ui_theme.hpp"
 #include "ui_dividends.hpp"
 #include "ui_trades.hpp"
 #include "ui_charts.hpp"
@@ -142,6 +143,7 @@ public:
     void synchronize_signal_controls();
     bool read_signal_settings_from_controls();
     void fill_signals();
+    void fill_recent_events();
     void add_notification_icon();
     std::string signal_reason_text(const SignalEvaluation& evaluation);
     void notify_new_signals();
@@ -162,6 +164,13 @@ public:
     void import_portfolio_operations();
     void load_observations();
     void create_controls(HWND window);
+    void initialize_appearance();
+    void apply_appearance();
+    void layout_workspace(int width, int height);
+    void paint_workspace(HDC dc, RECT client);
+    bool draw_themed_item(const DRAWITEMSTRUCT& item);
+    void paint_portfolio_cards(HDC dc, int width);
+
     void create_charts_controls(HWND window);
     void create_trades_controls(HWND window);
     void create_portfolio_controls(HWND window);

@@ -39,7 +39,7 @@ void Application::refresh_data() {
 
 void Application::refresh_market_views() {
     if(dividends_page.window){fill_dividend_list();InvalidateRect(dividends_page.window,nullptr,TRUE);}
-    fill_list();fill_signals();fill_portfolio();notify_new_signals();
+    fill_list();fill_signals();fill_portfolio();notify_new_signals();fill_recent_events();
 }
 void Application::apply_market_refresh(std::uint64_t request,MarketRefreshResult result) {
     if(!state.market.is_current(request))return;
@@ -62,6 +62,8 @@ void Application::apply_market_refresh(std::uint64_t request,MarketRefreshResult
 
 void Application::activate_page(int page) {
     shell.active_page = std::clamp(page, 0, 5);
+    TabCtrl_SetCurSel(shell.tabs, shell.active_page);
+    for(auto button:shell.navigation)if(button)InvalidateRect(button,nullptr,TRUE);
     if(signals_page.observation_page){ShowWindow(signals_page.observation_page,shell.active_page==5?SW_SHOW:SW_HIDE);if(shell.active_page==5)refresh_observation_page(signals_page.observation_page);}
     for (const auto control : charts_page.market_controls) ShowWindow(control, shell.active_page == 0 ? SW_SHOW : SW_HIDE);
     for (const auto control : trades_page.controls) ShowWindow(control, shell.active_page == 1 ? SW_SHOW : SW_HIDE);
@@ -117,6 +119,7 @@ void Application::create_controls(HWND window) {
     create_signals_controls(window);
     create_backtest_controls(window);
     create_observation_controls(window);
+    initialize_appearance();
     activate_page(0);
     SetTimer(window,TIMER_TASKS,50,nullptr);
 }
@@ -141,25 +144,25 @@ LRESULT CALLBACK Application::handle_window_message(HWND window, UINT message, W
         add_notification_icon(); refresh_data(); return 0;
     case WM_SIZE: {
         const int width = LOWORD(lparam), height = HIWORD(lparam);
-        if(signals_page.observation_page)MoveWindow(signals_page.observation_page,16,100,width-32,height-116,TRUE);
-        if (shell.tabs) MoveWindow(shell.tabs,16,8,std::max(400,width-526),34,TRUE);
-        if(shell.cancel_loading)MoveWindow(shell.cancel_loading,width-496,9,155,28,TRUE);
-        if(shell.diagnostics)MoveWindow(shell.diagnostics,width-331,9,140,28,TRUE);
-        if(shell.backup_button)MoveWindow(shell.backup_button, width-171, 9, 155, 28, TRUE);
-        resize_charts(width, height);
-        resize_trades(width, height);
-        resize_signals(width, height);
-        resize_backtest(width, height);
-        resize_portfolio(width, height);
+        layout_workspace(width,height);
         return 0;
     }
     case WM_GETMINMAXINFO: {
         auto* limits = reinterpret_cast<MINMAXINFO*>(lparam);
-        limits->ptMinTrackSize.x = 1180;
-        limits->ptMinTrackSize.y = 760;
+        limits->ptMinTrackSize.x = 1364;
+        limits->ptMinTrackSize.y = 900;
         return 0;
     }
     case WM_COMMAND:
+        if(LOWORD(wparam)>=theme::navigation_first && LOWORD(wparam)<theme::navigation_first+6) {
+            activate_page(LOWORD(wparam)-theme::navigation_first);return 0;
+        }
+        if(LOWORD(wparam)==theme::navigation_first+6){open_dividends_window();return 0;}
+        if(LOWORD(wparam)==theme::toggle){
+            shell.dark_theme=!shell.dark_theme;apply_appearance();
+            if(!state.persistence.writes_blocked)storage_operation([&]{app_storage.atomic_write("appearance.txt",shell.dark_theme?"dark":"light");});
+            return 0;
+        }
         if(command_charts(wparam)||command_backtest(wparam)||command_signals(wparam)||command_portfolio(wparam)||command_trades(wparam))return 0;
         switch (LOWORD(wparam)) {
         case ID_CANCEL_LOADING: cancel_loading(); return 0;
@@ -168,6 +171,18 @@ LRESULT CALLBACK Application::handle_window_message(HWND window, UINT message, W
         case ID_BACKUP: start_backup(); return 0;
         }
         break;
+    case WM_DRAWITEM:
+        if(draw_themed_item(*reinterpret_cast<DRAWITEMSTRUCT*>(lparam)))return TRUE;
+        break;
+    case WM_CTLCOLORSTATIC: case WM_CTLCOLOREDIT: case WM_CTLCOLORLISTBOX: case WM_CTLCOLORBTN: {
+        const auto c=theme::colors(shell.dark_theme);auto dc=reinterpret_cast<HDC>(wparam);
+        SetTextColor(dc,c.text);SetBkColor(dc,message==WM_CTLCOLORSTATIC?c.canvas:c.surface);
+        return reinterpret_cast<LRESULT>(message==WM_CTLCOLORSTATIC?shell.canvas_brush:shell.surface_brush);
+    }
+    case WM_ERASEBKGND: {
+        RECT r{};GetClientRect(window,&r);FillRect(reinterpret_cast<HDC>(wparam),&r,shell.canvas_brush);return 1;
+    }
+    case WM_SYSCOLORCHANGE: case WM_SETTINGCHANGE: apply_appearance();return 0;
     case WM_NOTIFY:
         if(notify_charts(lparam))return 0;
         if(reinterpret_cast<NMHDR*>(lparam)->code==LVN_COLUMNCLICK) {
@@ -223,10 +238,13 @@ LRESULT CALLBACK Application::handle_window_message(HWND window, UINT message, W
     }
     case WM_PAINT: {
         PAINTSTRUCT ps{}; HDC dc = BeginPaint(window, &ps);
-        if (shell.active_page == 0) {
-            RECT client{}; GetClientRect(window, &client);
-            paint_charts(dc,client);
-        }
+        RECT client{}; GetClientRect(window, &client);
+        paint_workspace(dc,client);
+        const int saved=SaveDC(dc);SetViewportOrgEx(dc,theme::sidebar,0,nullptr);
+        client.right-=theme::sidebar;
+        if(shell.active_page==0)paint_charts(dc,client);
+        if(shell.active_page==2)paint_portfolio_cards(dc,client.right);
+        RestoreDC(dc,saved);
         EndPaint(window, &ps); return 0;
     }
     case WM_CLOSE:
