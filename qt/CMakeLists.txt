@@ -22,7 +22,7 @@ qt_add_executable(moexwatch_quick main.cpp)
 set_target_properties(moexwatch_quick PROPERTIES WIN32_EXECUTABLE TRUE OUTPUT_NAME MOEXWatch-Qt)
 target_link_libraries(moexwatch_quick PRIVATE moex_qt_backend Qt6::QuickControls2 Qt6::Widgets)
 set_source_files_properties(qml/Theme.qml PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
-set(qml_files qml/Main.qml qml/Theme.qml qml/ActionButton.qml qml/Surface.qml
+set(qml_files qml/WindowDragArea.qml qml/Main.qml qml/Theme.qml qml/ActionButton.qml qml/Surface.qml
   qml/MetricCard.qml qml/PortfolioPage.qml qml/JournalPage.qml qml/OperationDialog.qml
   qml/LevelsDialog.qml qml/SettingsPage.qml qml/Allocation.qml qml/OverviewPage.qml
   qml/ScreenerPage.qml qml/SignalsPage.qml qml/PurchasePlanPage.qml qml/DecisionDiaryPage.qml
@@ -70,3 +70,9 @@ add_executable(qt_window_geometry_tests tests/window_geometry_tests.cpp)
 target_link_libraries(qt_window_geometry_tests PRIVATE moex_qt_backend Qt6::Test)
 add_test(NAME qt_window_geometry_tests COMMAND qt_window_geometry_tests)
 set_tests_properties(qt_window_geometry_tests PROPERTIES TIMEOUT 20)
+
+add_executable(qt_window_drag_tests tests/window_drag_tests.cpp)
+target_link_libraries(qt_window_drag_tests PRIVATE moex_qt_backend Qt6::Test)
+target_compile_definitions(qt_window_drag_tests PRIVATE DRAG_QML="${CMAKE_CURRENT_SOURCE_DIR}/qml/WindowDragArea.qml")
+add_test(NAME qt_window_drag_tests COMMAND qt_window_drag_tests)
+set_tests_properties(qt_window_drag_tests PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software" TIMEOUT 30)

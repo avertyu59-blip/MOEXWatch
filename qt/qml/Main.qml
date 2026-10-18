@@ -10,7 +10,7 @@ ApplicationWindow {
     width: Math.min(1440, Screen.desktopAvailableWidth)
     height: Math.min(920, Screen.desktopAvailableHeight)
     minimumWidth: 640; minimumHeight: 480
-    title: "MOEXWatch 0.7.2 · Qt"
+    title: "MOEXWatch 0.7.3 · Qt"
     font.family: Theme.family
     font.pixelSize: 14
     color: Theme.canvas
@@ -49,7 +49,11 @@ ApplicationWindow {
             color: Theme.surface
             ColumnLayout {
                 anchors.fill: parent; anchors.margins: 12; spacing: 8
-                Text { text: window.compact ? "MW" : "▥  MOEX Watch"; color: Theme.text; font.pixelSize: 21; font.weight: Font.DemiBold; Layout.topMargin: 12; Layout.bottomMargin: 12 }
+                Item {
+                    Layout.fillWidth: true; implicitHeight: 44; Layout.topMargin: 12; Layout.bottomMargin: 12
+                    Text { anchors.fill: parent; verticalAlignment: Text.AlignVCenter; text: window.compact ? "MW" : "▥  MOEX Watch"; color: Theme.text; font.pixelSize: 21; font.weight: Font.DemiBold; }
+                    WindowDragArea { objectName: "logoDragArea"; anchors.fill: parent; targetWindow: window }
+                }
                 ListView {
                     id: navigation
                     Layout.fillWidth: true; Layout.fillHeight: true; clip: true; spacing: 4
@@ -69,7 +73,7 @@ ApplicationWindow {
                     }
                 }
                 ActionButton { text: window.compact ? "◐" : "Сменить тему"; Accessible.name: "Сменить тему"; Layout.fillWidth: true; implicitWidth: 40; onClicked: backend.dark=!backend.dark }
-                Text { visible: !window.compact; text: "MOEXWatch 0.7.2\nC++ · Qt Quick"; color: Theme.muted; font.pixelSize: 12; lineHeight: 1.5; Layout.topMargin: 8 }
+                Text { visible: !window.compact; text: "MOEXWatch 0.7.3\nC++ · Qt Quick"; color: Theme.muted; font.pixelSize: 12; lineHeight: 1.5; Layout.topMargin: 8 }
             }
         }
         ColumnLayout {
@@ -79,7 +83,7 @@ ApplicationWindow {
                 Item {
                     Layout.fillWidth: true; implicitHeight: 40
                     Text { anchors.fill: parent; text: window.pages[window.pageIndex].name; color: Theme.text; font.pixelSize: window.compact ? 22 : 28; font.weight: Font.DemiBold; elide: Text.ElideRight; verticalAlignment: Text.AlignVCenter }
-                    MouseArea { anchors.fill: parent; acceptedButtons: Qt.LeftButton; onPressed: window.startSystemMove(); onDoubleClicked: window.visibility===Window.Maximized ? window.showNormal() : window.showMaximized() }
+                    WindowDragArea { objectName: "headerDragArea"; anchors.fill: parent; targetWindow: window }
                 }
                 BusyIndicator { running: backend.busy; visible: running; implicitWidth: 32; implicitHeight: 32 }
                 ActionButton { text: backend.busy ? "Отменить" : "Обновить рынок"; primary: !backend.busy; onClicked: backend.busy ? backend.cancel() : backend.refresh() }
@@ -118,6 +122,7 @@ ApplicationWindow {
             }
         }
     }
+    WindowDragArea { objectName: "topDragArea"; x: 6; y: 6; width: window.width - 12; height: window.compact ? 6 : 18; targetWindow: window }
     // Native system resizing preserves platform drag behavior and minimum size.
     // Eight thin hit areas leave the page and header controls unobstructed.
     Repeater {

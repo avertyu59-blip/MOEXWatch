@@ -2,8 +2,12 @@ $ErrorActionPreference = 'Stop'
 function Deploy-QtPackage {
     param([string]$SourceDir,[string]$BuildDir,[string]$PackageDir)
     New-Item -ItemType Directory -Path $PackageDir -Force | Out-Null
+    # Reused preview directories may contain a classic EXE from an older version.
+    foreach ($legacy in @('MOEXWatch-Classic.exe','MOEXWatch.exe','moexwatch.exe')) {
+        $legacyPath = Join-Path $PackageDir $legacy
+        if (Test-Path $legacyPath) { Remove-Item $legacyPath -Force }
+    }
     Copy-Item (Join-Path $BuildDir 'qt/Release/MOEXWatch-Qt.exe') $PackageDir
-    Copy-Item (Join-Path $BuildDir 'Release/moexwatch.exe') (Join-Path $PackageDir 'MOEXWatch-Classic.exe')
     $deployer = (Get-Command windeployqt).Source
     & $deployer --release --qmldir (Join-Path $SourceDir 'qt/qml') --compiler-runtime (Join-Path $PackageDir 'MOEXWatch-Qt.exe')
     if ($LASTEXITCODE -ne 0) { throw 'Qt deployment failed' }
@@ -26,6 +30,9 @@ function Deploy-QtPackage {
 }
 function Test-QtPackage {
     param([string]$PackageDir,[string]$LogPrefix)
+    foreach ($legacy in @('MOEXWatch-Classic.exe','MOEXWatch.exe','moexwatch.exe')) {
+        if (Test-Path (Join-Path $PackageDir $legacy)) { throw "Unexpected classic executable: $legacy" }
+    }
     $previousPath = $env:PATH
     $previousPlatform = $env:QT_QPA_PLATFORM
     $previousBackend = $env:QT_QUICK_BACKEND

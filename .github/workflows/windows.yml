@@ -17,28 +17,6 @@ jobs:
         run: cmake --build build --config Release
       - name: Test
         run: ctest --test-dir build -C Release --output-on-failure
-      - name: Package verified Windows application
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $version = (Get-Content VERSION.txt -Raw).Trim()
-          New-Item -ItemType Directory -Path verified-package,verified-downloads | Out-Null
-          Copy-Item build/Release/moexwatch.exe verified-package/MOEXWatch.exe
-          Copy-Item README.md,VERSION.txt verified-package
-          Compress-Archive -Path verified-package/* -DestinationPath "verified-downloads/MOEXWatch-$version-Windows-x64.zip"
-          git archive --format=zip "--output=verified-downloads/MOEXWatch-$version-source.zip" HEAD
-          if ($LASTEXITCODE -ne 0) { throw 'Source packaging failed' }
-          Get-ChildItem verified-downloads/*.zip | ForEach-Object {
-            $hash = Get-FileHash $_.FullName -Algorithm SHA256
-            "$($hash.Hash.ToLowerInvariant())  $($_.Name)"
-          } | Set-Content "verified-downloads/MOEXWatch-$version-SHA256SUMS.txt" -Encoding utf8
-      - name: Retain verified packages
-        uses: actions/upload-artifact@v4
-        with:
-          name: MOEXWatch-Windows-x64-${{ github.sha }}
-          path: verified-downloads/*
-          if-no-files-found: error
-          retention-days: 30
 
   portable-calculations:
     runs-on: ubuntu-24.04
