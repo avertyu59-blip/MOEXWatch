@@ -1,5 +1,6 @@
 #include "portfolio_controller.hpp"
 #include "chart_item.hpp"
+#include "window_geometry.hpp"
 #include <qqml.h>
 #include <QApplication>
 #include <QSystemTrayIcon>
@@ -23,6 +24,7 @@
 
 int main(int argc,char* argv[]) {
     QApplication app(argc,argv);
+    app.setQuitOnLastWindowClosed(true);
     QCoreApplication::setOrganizationName("MOEXWatch");
     QCoreApplication::setApplicationName("MOEXWatch Qt");
     QQuickStyle::setStyle("Basic");
@@ -83,11 +85,8 @@ int main(int argc,char* argv[]) {
             const auto center=QPoint(savedX+savedWidth/2,savedY+savedHeight/2);
             if(auto* found=QGuiApplication::screenAt(center))screen=found;
             const auto area=screen->availableGeometry();
-            const int width=std::clamp(savedWidth,640,std::max(640,area.width()));
-            const int height=std::clamp(savedHeight,480,std::max(480,area.height()));
-            const int x=std::clamp(savedX,area.left(),std::max(area.left(),area.right()-width+1));
-            const int y=std::clamp(savedY,area.top(),std::max(area.top(),area.bottom()-height+1));
-            normalGeometry=QRect(x,y,width,height);mainWindow->setGeometry(normalGeometry);
+            normalGeometry=restoreWindowGeometry(QRect(savedX,savedY,savedWidth,savedHeight),area,mainWindow->frameMargins());
+            mainWindow->setGeometry(normalGeometry);
             const int page=static_cast<int>(pageKeys.indexOf(windowSettings->value("page","overview").toString()));
             if(page>=0)mainWindow->setProperty("pageIndex",page);
             if(windowSettings->value("maximized",false).toBool())mainWindow->showMaximized();
@@ -110,7 +109,7 @@ int main(int argc,char* argv[]) {
     QPixmap iconPixmap(48,48);iconPixmap.fill(QColor("#1762c0"));
     {QPainter painter(&iconPixmap);painter.setPen(Qt::white);auto font=painter.font();font.setBold(true);font.setPixelSize(21);painter.setFont(font);painter.drawText(iconPixmap.rect(),Qt::AlignCenter,"MW");}
     const QIcon appIcon(iconPixmap);app.setWindowIcon(appIcon);
-    QSystemTrayIcon tray(appIcon);tray.setToolTip("MOEXWatch 0.7.0");
+    QSystemTrayIcon tray(appIcon);tray.setToolTip("MOEXWatch 0.7.1");
     if(!smoke&&QSystemTrayIcon::isSystemTrayAvailable())tray.show();
     QObject::connect(&signalModule,&SignalsController::notification,&app,[&](const QString& title,const QString& body){
         mainWindow->setProperty("notice",title+" · "+body);
@@ -122,6 +121,11 @@ int main(int argc,char* argv[]) {
         auto* window=qobject_cast<QQuickWindow*>(engine.rootObjects().first());
         if(!window)return 3;
         // Exercise all pages, dialogs, themes and both narrow/wide layouts.
+        if(!(window->flags()&Qt::WindowCloseButtonHint)||(window->flags()&Qt::FramelessWindowHint))++errors;
+        QTimer::singleShot(20,&app,[window,&errors]{auto* button=window->findChild<QObject*>("windowMaximize");if(!button||!QMetaObject::invokeMethod(button,"clicked"))++errors;});
+        QTimer::singleShot(40,&app,[window,&errors]{if(window->visibility()!=QWindow::Maximized)++errors;auto* button=window->findChild<QObject*>("windowMaximize");if(button)QMetaObject::invokeMethod(button,"clicked");});
+        QTimer::singleShot(60,&app,[window,&errors]{if(window->visibility()!=QWindow::Windowed)++errors;auto* button=window->findChild<QObject*>("windowMinimize");if(!button||!QMetaObject::invokeMethod(button,"clicked"))++errors;});
+        QTimer::singleShot(80,&app,[window,&errors]{if(window->visibility()!=QWindow::Minimized)++errors;window->showNormal();});
         QTimer::singleShot(100,&app,[window,&backend]{window->resize(760,620);window->setProperty("pageIndex",9);backend.setDark(false);});
         QTimer::singleShot(200,&app,[window]{window->setProperty("pageIndex",11);});
         QTimer::singleShot(300,&app,[window,&backend]{window->resize(1440,920);window->setProperty("pageIndex",0);backend.setDark(true);});
@@ -160,7 +164,11 @@ int main(int argc,char* argv[]) {
             if(!calculate||!QMetaObject::invokeMethod(calculate,"clicked"))++errors;
         });
         for(int page=1;page<12;++page)QTimer::singleShot(900+page*80,&app,[window,page]{window->setProperty("pageIndex",page);});
-        QTimer::singleShot(2000,&app,[&]{app.exit(errors?4:0);});
+        QTimer::singleShot(2000,&app,[window,&app,&errors]{
+            auto* close=window->findChild<QObject*>("windowClose");
+            if(errors||!close||!QMetaObject::invokeMethod(close,"clicked"))app.exit(4);
+        });
+        QTimer::singleShot(4000,&app,[&app]{app.exit(6);});
     }
     const int screenshot=arguments.indexOf("--screenshot");
     if(screenshot>=0&&screenshot+1<arguments.size()) {

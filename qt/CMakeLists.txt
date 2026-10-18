@@ -65,3 +65,8 @@ foreach(module IN ITEMS signals decision research events strategy)
   add_test(NAME qt_${module}_tests COMMAND qt_${module}_tests)
   set_tests_properties(qt_${module}_tests PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software" TIMEOUT 30)
 endforeach()
+
+add_executable(qt_window_geometry_tests tests/window_geometry_tests.cpp)
+target_link_libraries(qt_window_geometry_tests PRIVATE moex_qt_backend Qt6::Test)
+add_test(NAME qt_window_geometry_tests COMMAND qt_window_geometry_tests)
+set_tests_properties(qt_window_geometry_tests PROPERTIES TIMEOUT 20)
