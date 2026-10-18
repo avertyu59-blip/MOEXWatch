@@ -57,7 +57,7 @@ private slots:
         QTemporaryDir dir;const auto root=std::filesystem::path(dir.path().toStdString());
         {PortfolioController c(root);QVERIFY(c.addOperation("2026-10-01","SBER",0,"1","100","0"));}
         const auto path=dir.path()+"/portfolio_journal_v2.csv";QFile f(path);QVERIFY(f.open(QIODevice::WriteOnly));f.write("corrupt");f.close();
-        PortfolioController c(root);QVERIFY(!c.writable());QVERIFY(!c.addOperation("2026-10-01","SBER",0,"1","100","0"));
+        PortfolioController c(root);QVERIFY(!c.writable());QCOMPARE(c.totals()["cost"].toString(),QString("—"));QCOMPARE(c.totals()["totalAssets"].toString(),QString("—"));QVERIFY(!c.addOperation("2026-10-01","SBER",0,"1","100","0"));
         QVERIFY(f.open(QIODevice::ReadOnly));QCOMPARE(f.readAll(),QByteArray("corrupt"));
     }
     void cancelAndShutdownKeepSnapshot() {

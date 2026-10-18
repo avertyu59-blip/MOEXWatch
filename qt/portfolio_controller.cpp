@@ -72,7 +72,7 @@ PortfolioController::PortfolioController(std::filesystem::path root,Fetch fetch,
         const auto sessions=settings_->value("overview/sessions",66).toInt();
         if(sessions==0||sessions==22||sessions==66||sessions==252)chart_sessions_=sessions;
         chart_comparison_=settings_->value("overview/comparison",false).toBool();
-        journal_=storage_.load_portfolio();
+        journal_=storage_.load_portfolio();journal_readable_=true;
         instruments_=storage_.load_watchlist();
         synchronizePositions();
         // Read only this profile's cache. Offline data stays visibly stale.
@@ -219,7 +219,7 @@ void PortfolioController::sortPositions(QString key) {
 void PortfolioController::rebuild() {
     synchronizePositions();
     std::vector<Quote> quotes;for(const auto& i:instruments_)quotes.push_back(i.quote);
-    const auto result=calculate_portfolio(journal_.transactions,quotes);
+    const auto result=journal_readable_?calculate_portfolio(journal_.transactions,quotes):std::optional<PortfolioSummary>{};
     QList<QVariantMap> rows,operations;allocation_.clear();
     const auto now=QDateTime::currentSecsSinceEpoch();
     bool fresh=static_cast<bool>(result);
@@ -357,7 +357,7 @@ void PortfolioController::drain(){
     }
 }
 void PortfolioController::loadDemo(){
-    cancel();tasks_.shutdown();mailbox_->take();writable_=false;demo_=true;free_cash_=0;cash_valid_=true;cash_error_.clear();++journal_revision_;error_.clear();journal_={};instruments_.clear();index_candles_.clear();index_stale_=false;index_error_.clear();
+    cancel();tasks_.shutdown();mailbox_->take();writable_=false;demo_=true;journal_readable_=true;free_cash_=0;cash_valid_=true;cash_error_.clear();++journal_revision_;error_.clear();journal_={};instruments_.clear();index_candles_.clear();index_stale_=false;index_error_.clear();
     const char* names[]={"SBER","GAZP","LKOH","YDEX"};
     const double entry[]={265.4,153.7,6410,3520},current[]={282.15,146.32,6845,3560},quantity[]={500,400,100,80};
     const auto stamp=observation_time(QDateTime::currentSecsSinceEpoch());

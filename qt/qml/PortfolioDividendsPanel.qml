@@ -11,7 +11,7 @@ Surface {
         Label { text: "Дивидендный доход"; font.pixelSize: 20; color: Theme.text }
         Label { text: "Получено после удержания налога: " + root.controller.totals.receivedNetText + " · Ожидается до налогов: " + root.controller.totals.expectedGrossText; color: Theme.text; wrapMode: Text.WordWrap; Layout.fillWidth: true }
         Label { text: "Прогноз состава до даты последней покупки: " + root.controller.totals.projectedGrossText; color: Theme.muted; wrapMode: Text.WordWrap; Layout.fillWidth: true }
-        Label { text: "Ожидания не входят в прибыль и свободные средства. Факт подтверждается по брокерскому отчёту. Кэш календаря может быть устаревшим; проверьте источник перед подтверждением."; color: Theme.muted; wrapMode: Text.WordWrap; Layout.fillWidth: true }
+        Label { text: "Календарь прав ограничен 2026 годом. Отсутствие строк не подтверждает отсутствие выплат. Ожидания не входят в прибыль и свободные средства. Факт подтверждается по брокерскому отчёту. Кэш календаря может быть устаревшим; проверьте источник перед подтверждением."; color: Theme.muted; wrapMode: Text.WordWrap; Layout.fillWidth: true }
         Label { visible: text.length>0; text: root.controller.error; color: Theme.negative; wrapMode: Text.WordWrap; Layout.fillWidth: true }
         Repeater {
             model: root.controller.events

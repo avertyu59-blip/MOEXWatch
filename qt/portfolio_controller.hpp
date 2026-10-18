@@ -108,6 +108,7 @@ private:
     moexwatch::AppStorage storage_;
     moexwatch::PortfolioJournal journal_;
     quint64 journal_revision_{};
+    bool journal_readable_{};
     double free_cash_{};
     std::optional<std::string> cash_snapshot_;
     bool cash_valid_{true};
