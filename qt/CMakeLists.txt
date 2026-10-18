@@ -4,8 +4,10 @@ qt_standard_project_setup(REQUIRES 6.8)
 add_library(moex_qt_backend portfolio_controller.cpp portfolio_controller.hpp overview_controller.cpp chart_item.cpp chart_item.hpp
   signals_controller.cpp signals_controller.hpp decision_controller.cpp decision_controller.hpp
   research_controller.cpp research_controller.hpp events_controller.cpp events_controller.hpp
-  strategy_controller.cpp strategy_controller.hpp)
-target_link_libraries(moex_qt_backend PUBLIC market_core Qt6::Quick)
+  strategy_controller.cpp strategy_controller.hpp
+  portfolio_transfer_controller.cpp portfolio_transfer_controller.hpp
+  portfolio_dividends_controller.cpp portfolio_dividends_controller.hpp)
+target_link_libraries(moex_qt_backend PUBLIC market_core Qt6::Quick Qt6::Widgets)
 target_include_directories(moex_qt_backend PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 if(WIN32)
   target_sources(moex_qt_backend PRIVATE ../src/market_data.cpp ../src/winhttp_transport.cpp)
@@ -22,7 +24,7 @@ qt_add_executable(moexwatch_quick main.cpp)
 set_target_properties(moexwatch_quick PROPERTIES WIN32_EXECUTABLE TRUE OUTPUT_NAME MOEXWatch-Qt)
 target_link_libraries(moexwatch_quick PRIVATE moex_qt_backend Qt6::QuickControls2 Qt6::Widgets)
 set_source_files_properties(qml/Theme.qml PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
-set(qml_files qml/WindowDragArea.qml qml/Main.qml qml/Theme.qml qml/ActionButton.qml qml/Surface.qml
+set(qml_files qml/PortfolioTransferDialog.qml qml/PortfolioSummaryPanel.qml qml/PortfolioDividendsPanel.qml qml/WindowDragArea.qml qml/Main.qml qml/Theme.qml qml/ActionButton.qml qml/Surface.qml
   qml/MetricCard.qml qml/PortfolioPage.qml qml/JournalPage.qml qml/OperationDialog.qml
   qml/LevelsDialog.qml qml/SettingsPage.qml qml/Allocation.qml qml/OverviewPage.qml
   qml/ScreenerPage.qml qml/SignalsPage.qml qml/PurchasePlanPage.qml qml/DecisionDiaryPage.qml
@@ -76,3 +78,13 @@ target_link_libraries(qt_window_drag_tests PRIVATE moex_qt_backend Qt6::Test)
 target_compile_definitions(qt_window_drag_tests PRIVATE DRAG_QML="${CMAKE_CURRENT_SOURCE_DIR}/qml/WindowDragArea.qml")
 add_test(NAME qt_window_drag_tests COMMAND qt_window_drag_tests)
 set_tests_properties(qt_window_drag_tests PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software" TIMEOUT 30)
+
+foreach(module IN ITEMS portfolio_transfer portfolio_dividends)
+  add_executable(qt_${module}_tests tests/${module}_tests.cpp)
+  target_link_libraries(qt_${module}_tests PRIVATE moex_qt_backend Qt6::Test Qt6::Widgets)
+  if(MSVC)
+    target_compile_options(qt_${module}_tests PRIVATE /utf-8)
+  endif()
+  add_test(NAME qt_${module}_tests COMMAND qt_${module}_tests)
+  set_tests_properties(qt_${module}_tests PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software" TIMEOUT 30)
+endforeach()

@@ -22,7 +22,7 @@ function Deploy-QtPackage {
         if (-not (Test-Path (Join-Path $PackageDir $required))) { throw "Missing runtime file: $required" }
     }
     Copy-Item (Join-Path $SourceDir 'README.md'),(Join-Path $SourceDir 'VERSION.txt') $PackageDir
-    Copy-Item (Join-Path $SourceDir 'docs/QT_PREVIEW.md'),(Join-Path $SourceDir 'docs/QT_THIRD_PARTY.md'),(Join-Path $SourceDir 'docs/FUNDAMENTALS_FORMAT.md') $PackageDir
+    Copy-Item (Join-Path $SourceDir 'docs/QT_PREVIEW.md'),(Join-Path $SourceDir 'docs/QT_THIRD_PARTY.md'),(Join-Path $SourceDir 'docs/FUNDAMENTALS_FORMAT.md'),(Join-Path $SourceDir 'docs/PORTFOLIO_0_8.md') $PackageDir
     New-Item -ItemType Directory -Path (Join-Path $PackageDir 'licenses') -Force | Out-Null
     foreach ($license in @('LGPL-3.0-only.txt','GPL-3.0-only.txt','Qt-GPL-exception-1.0.txt')) {
         Invoke-WebRequest "https://raw.githubusercontent.com/qt/qtbase/v6.8.3/LICENSES/$license" -OutFile (Join-Path $PackageDir "licenses/$license")

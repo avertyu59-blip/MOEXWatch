@@ -46,7 +46,7 @@ void PortfolioController::setSelectedTicker(QString ticker) {
     if (ticker == selected_ticker_)
         return;
     if (std::none_of(instruments_.begin(), instruments_.end(),
-                     [&](const auto &i) { return str(i.ticker) == ticker; }))
+                     [&](const auto &i) { return str(i.ticker) == ticker; }) && std::none_of(journal_.transactions.begin(),journal_.transactions.end(),[&](const auto& t){return str(t.ticker)==ticker;}))
         return;
     selected_ticker_ = std::move(ticker);
     rebuildOverview();
@@ -173,6 +173,11 @@ bool PortfolioController::setTarget(QString ticker, QString input) {
 }
 void PortfolioController::rebuildOverview() {
     const auto previousSelection = selected_ticker_;
+    if(std::none_of(instruments_.begin(),instruments_.end(),[&](const auto& i){return str(i.ticker)==selected_ticker_;}) &&
+       std::any_of(journal_.transactions.begin(),journal_.transactions.end(),[&](const auto& operation){return str(operation.ticker)==selected_ticker_;})) {
+        Instrument instrument;instrument.ticker=selected_ticker_.toStdString();instrument.quote.ticker=instrument.ticker;
+        instruments_.push_back(std::move(instrument));
+    }
     if (std::none_of(instruments_.begin(), instruments_.end(),
                      [&](const auto &i) { return str(i.ticker) == selected_ticker_; })) {
         selected_ticker_ = instruments_.empty() ? QString{} : str(instruments_.front().ticker);

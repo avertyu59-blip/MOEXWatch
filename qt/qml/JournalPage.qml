@@ -5,6 +5,8 @@ Surface {
     id: root
     required property var controller
     signal addRequested()
+    signal importRequested()
+    signal exportRequested()
     property string selectedId: ""
     property string selectedDescription: ""
     ColumnLayout {
@@ -13,6 +15,11 @@ Surface {
             Layout.fillWidth: true
             Text { text: "Журнал операций"; color: Theme.text; font.pixelSize: 20; font.weight: Font.DemiBold; Layout.fillWidth: true }
             ActionButton { text: "+ Операция"; primary: true; enabled: root.controller.writable; onClicked: root.addRequested() }
+        }
+        Flow {
+            Layout.fillWidth: true; spacing: 8
+            ActionButton { text: "Импорт CSV"; enabled: root.controller.writable; onClicked: root.importRequested() }
+            ActionButton { text: "Экспорт CSV"; onClicked: root.exportRequested() }
         }
         Text { text: "От новых к старым. Выберите строку для удаления; связь сохраняется по ID операции."; color: Theme.muted; wrapMode: Text.WordWrap; Layout.fillWidth: true }
         Flickable {

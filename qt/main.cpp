@@ -12,6 +12,8 @@
 #include "research_controller.hpp"
 #include "events_controller.hpp"
 #include "strategy_controller.hpp"
+#include "portfolio_transfer_controller.hpp"
+#include "portfolio_dividends_controller.hpp"
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QQuickStyle>
@@ -49,7 +51,12 @@ int main(int argc,char* argv[]) {
     DecisionController decisions(&backend);
     ResearchController research(&backend);
     EventsController events(&backend);
+    PortfolioTransferController transfer(&backend);
+    PortfolioDividendsController dividends(&backend);
     StrategyController strategies(&backend);
+    strategies.setDividendSource([&dividends](std::string_view ticker){return dividends.backtestDividends(std::string(ticker));});
+    QObject::connect(&dividends,&PortfolioDividendsController::incomeChanged,&strategies,&StrategyController::invalidateDividendData);
+    QObject::connect(&events,&EventsController::snapshotChanged,&dividends,&PortfolioDividendsController::reload);
     QQmlApplicationEngine engine;
     engine.rootContext()->setContextProperty("backend",&backend);
     engine.rootContext()->setContextProperty("signalBackend",&signalModule);
@@ -57,6 +64,8 @@ int main(int argc,char* argv[]) {
     engine.rootContext()->setContextProperty("researchBackend",&research);
     engine.rootContext()->setContextProperty("eventsBackend",&events);
     engine.rootContext()->setContextProperty("strategyBackend",&strategies);
+    engine.rootContext()->setContextProperty("transferBackend",&transfer);
+    engine.rootContext()->setContextProperty("dividendPortfolioBackend",&dividends);
     QObject::connect(&engine,&QQmlApplicationEngine::warnings,&app,[&](const QList<QQmlError>& warnings){
         for(const auto& warning:warnings){std::fprintf(stderr,"%s\n",qPrintable(warning.toString()));++errors;}
     });
@@ -110,7 +119,7 @@ int main(int argc,char* argv[]) {
     QPixmap iconPixmap(48,48);iconPixmap.fill(QColor("#1762c0"));
     {QPainter painter(&iconPixmap);painter.setPen(Qt::white);auto font=painter.font();font.setBold(true);font.setPixelSize(21);painter.setFont(font);painter.drawText(iconPixmap.rect(),Qt::AlignCenter,"MW");}
     const QIcon appIcon(iconPixmap);app.setWindowIcon(appIcon);
-    QSystemTrayIcon tray(appIcon);tray.setToolTip("MOEXWatch 0.7.3");
+    QSystemTrayIcon tray(appIcon);tray.setToolTip("MOEXWatch 0.8.0");
     if(!smoke&&QSystemTrayIcon::isSystemTrayAvailable())tray.show();
     QObject::connect(&signalModule,&SignalsController::notification,&app,[&](const QString& title,const QString& body){
         mainWindow->setProperty("notice",title+" · "+body);
@@ -199,6 +208,11 @@ int main(int argc,char* argv[]) {
             if(!calculate||!QMetaObject::invokeMethod(calculate,"clicked"))++errors;
         });
         for(int page=1;page<12;++page)QTimer::singleShot(900+page*80,&app,[window,page]{window->setProperty("pageIndex",page);});
+        QTimer::singleShot(1810,&app,[window,&errors]{
+            auto* dialog=window->findChild<QObject*>("portfolioTransferDialog");
+            if(!dialog||!QMetaObject::invokeMethod(dialog,"open"))++errors;
+        });
+        QTimer::singleShot(1930,&app,[window]{if(auto* dialog=window->findChild<QObject*>("portfolioTransferDialog"))QMetaObject::invokeMethod(dialog,"close");});
         QTimer::singleShot(2000,&app,[window,&app,&errors]{
             auto* close=window->findChild<QObject*>("windowClose");
             if(errors||!close||!QMetaObject::invokeMethod(close,"clicked"))app.exit(4);

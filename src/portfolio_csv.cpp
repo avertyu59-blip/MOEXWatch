@@ -17,6 +17,8 @@ std::string trim(std::string s){const auto a=s.find_first_not_of(" \r\n\t");retu
 std::string upper(std::string s){for(char& c:s)c=static_cast<char>(std::toupper(static_cast<unsigned char>(c)));return s;}
 using Key=std::tuple<std::string,std::string,PortfolioSide,double,double,double>;
 Key key(const PortfolioTransaction& t){return {t.date,t.ticker,t.side,t.quantity,t.price,t.commission};}
+using AnonymousKey=std::tuple<std::string,std::string,PortfolioSide,double,double>;
+AnonymousKey anonymous_key(const PortfolioTransaction& t){return {t.date,t.ticker,t.side,t.quantity,t.price};}
 std::optional<double> number(std::string s){s=trim(std::move(s));std::replace(s.begin(),s.end(),',','.');double n{};const auto[p,e]=std::from_chars(s.data(),s.data()+s.size(),n);if(e!=std::errc{}||p!=s.data()+s.size()||!std::isfinite(n))return {};return n;}
 struct CsvRow{std::size_t line{};std::vector<std::string> cells;};
 std::vector<CsvRow> strict_csv(std::string_view csv,char separator){
@@ -56,8 +58,8 @@ ImportPreview preview_portfolio_csv(std::string_view csv,const std::vector<Portf
   const auto count=rows[0].cells.size();
   if(count!=6&&count!=9)throw std::runtime_error("Ожидаются 6 старых столбцов либо 9 столбцов с id;position_id;sequence");
   for(std::size_t i=0;i<count;++i){const auto h=upper(trim(rows[0].cells[i]));const auto it=std::find(names.begin(),names.end(),h);if(it==names.end()||(count==6&&it>=names.begin()+6)||!headers.insert(h).second)throw std::runtime_error("Неизвестный или повторный заголовок CSV");columns[static_cast<std::size_t>(it-names.begin())]=i;}
-  std::set<Key> seen;std::map<std::string,PortfolioTransaction> by_id;
-  for(const auto& t:existing){seen.insert(key(t));if(!t.id.empty())by_id.emplace(t.id,t);}
+  std::set<AnonymousKey> seen;std::map<std::string,PortfolioTransaction> by_id;
+  for(const auto& t:existing){seen.insert(anonymous_key(t));if(!t.id.empty())by_id.emplace(t.id,t);}
 
   for(std::size_t i=1;i<rows.size();++i){
    ImportRow row;row.line=rows[i].line;
@@ -80,10 +82,10 @@ ImportPreview preview_portfolio_csv(std::string_view csv,const std::vector<Portf
      if(key(found->second)!=key(t)||found->second.position_id!=t.position_id||found->second.sequence!=t.sequence){row.transaction=t;row.message="КОНФЛИКТ ID: содержимое операции отличается; импорт заблокирован";result.rows.push_back(row);continue;}
      duplicate=true;row.identity_duplicate=true;
     } else by_id.emplace(t.id,t);
-   } else duplicate=seen.contains(key(t));
-   seen.insert(key(t));row.transaction=t;
+   } else duplicate=seen.contains(anonymous_key(t));
+   seen.insert(anonymous_key(t));row.transaction=t;
    row.status=duplicate?ImportStatus::Duplicate:ImportStatus::New;
-   row.message=row.identity_duplicate?"Этот ID уже есть: всегда пропускается":duplicate?"Возможный дубликат по 6 полям":"Новая операция";
+   row.message=row.identity_duplicate?"Этот ID уже есть: всегда пропускается":duplicate?"Возможный дубликат по дате, тикеру, стороне, количеству и цене (комиссия не учитывается)":"Новая операция";
    result.rows.push_back(std::move(row));
   }
   if(result.rows.empty())result.error="В файле нет операций";
