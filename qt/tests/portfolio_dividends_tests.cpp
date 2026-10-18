@@ -29,6 +29,12 @@ QString key() { return "SBER|2026-10-16|2025"; }
 class DividendTests : public QObject {
   Q_OBJECT
 private slots:
+  void themeAndUnchangedReloadKeepIncomeStable() {
+    QTemporaryDir dir;PortfolioController market(dir.path().toStdString());
+    PortfolioDividendsController c(&market);QSignalSpy spy(&c,&PortfolioDividendsController::incomeChanged);
+    c.reload();market.setDark(false);QVERIFY(market.setFreeCash("123"));
+    QCOMPARE(spy.count(),0);
+  }
   void receiveRestartCloseAndAudit() {
     QTemporaryDir dir;
     auto root = std::filesystem::path(dir.path().toStdString());

@@ -231,6 +231,7 @@ PortfolioDividendsController::calculateCandidates() const {
 }
 void PortfolioDividendsController::reload() { rebuild(); }
 void PortfolioDividendsController::rebuild() {
+  const auto previousError=error_;
   candidates_ = calculateCandidates();
   QList<QVariantMap> events, receipts;
   QSet<QString> paid;
@@ -289,15 +290,13 @@ void PortfolioDividendsController::rebuild() {
          {"checkedAt", c.checkedAt},
          {"reason", q(c.entitlement.reason)}});
   }
-  events_.replace(events);
-  receipts_.replace(receipts);
   if (valid_ && !cache_error_.isEmpty())
     error_ = cache_error_;
   const bool totalsValid = valid_ && std::isfinite(net) &&
                            std::isfinite(expected) &&
                            std::isfinite(projected) && net <= 1e18 &&
                            expected <= 1e18 && projected <= 1e18;
-  totals_ = {{"valid", totalsValid},
+  const QVariantMap updatedTotals = {{"valid", totalsValid},
              {"receivedNet", totalsValid ? QVariant(net) : QVariant()},
              {"receivedNetText",
               totalsValid ? money(net) : QStringLiteral("Недоступно")},
@@ -308,7 +307,9 @@ void PortfolioDividendsController::rebuild() {
              {"projectedGrossText",
               totalsValid ? money(projected) : QStringLiteral("Недоступно")},
              {"positionNet", totalsValid ? positionNet : QVariantMap{}}};
-  emit changed();
+  const bool financialChange=events_.rows()!=events||receipts_.rows()!=receipts||totals_!=updatedTotals;
+  if(financialChange){events_.replace(events);receipts_.replace(receipts);totals_=updatedTotals;emit incomeChanged();}
+  if(financialChange||previousError!=error_)emit changed();
 }
 QVariantMap PortfolioDividendsController::preview(QString key) const {
   auto current = calculateCandidates();

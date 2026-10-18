@@ -29,6 +29,7 @@ public:
   backtestDividends(const std::string &ticker) const;
 signals:
   void changed();
+  void incomeChanged();
 
 private:
   struct Candidate {

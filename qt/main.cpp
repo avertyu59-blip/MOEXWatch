@@ -55,7 +55,7 @@ int main(int argc,char* argv[]) {
     PortfolioDividendsController dividends(&backend);
     StrategyController strategies(&backend);
     strategies.setDividendSource([&dividends](std::string_view ticker){return dividends.backtestDividends(std::string(ticker));});
-    QObject::connect(&dividends,&PortfolioDividendsController::changed,&strategies,&StrategyController::invalidateDividendData);
+    QObject::connect(&dividends,&PortfolioDividendsController::incomeChanged,&strategies,&StrategyController::invalidateDividendData);
     QObject::connect(&events,&EventsController::snapshotChanged,&dividends,&PortfolioDividendsController::reload);
     QQmlApplicationEngine engine;
     engine.rootContext()->setContextProperty("backend",&backend);
