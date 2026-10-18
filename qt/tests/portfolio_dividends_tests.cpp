@@ -7,6 +7,7 @@
 #include <QJsonObject>
 #include <QTemporaryDir>
 #include <QTest>
+#include <QSignalSpy>
 using namespace moexwatch;
 namespace {
 void cache(const std::filesystem::path &root, double amount = 10,
