@@ -16,6 +16,7 @@
 #include <QQmlContext>
 #include <QQuickStyle>
 #include <QQuickWindow>
+#include <QQuickItem>
 #include <QTemporaryDir>
 #include <QTimer>
 #include <QImage>
@@ -109,7 +110,7 @@ int main(int argc,char* argv[]) {
     QPixmap iconPixmap(48,48);iconPixmap.fill(QColor("#1762c0"));
     {QPainter painter(&iconPixmap);painter.setPen(Qt::white);auto font=painter.font();font.setBold(true);font.setPixelSize(21);painter.setFont(font);painter.drawText(iconPixmap.rect(),Qt::AlignCenter,"MW");}
     const QIcon appIcon(iconPixmap);app.setWindowIcon(appIcon);
-    QSystemTrayIcon tray(appIcon);tray.setToolTip("MOEXWatch 0.7.1");
+    QSystemTrayIcon tray(appIcon);tray.setToolTip("MOEXWatch 0.7.2");
     if(!smoke&&QSystemTrayIcon::isSystemTrayAvailable())tray.show();
     QObject::connect(&signalModule,&SignalsController::notification,&app,[&](const QString& title,const QString& body){
         mainWindow->setProperty("notice",title+" · "+body);
@@ -121,7 +122,17 @@ int main(int argc,char* argv[]) {
         auto* window=qobject_cast<QQuickWindow*>(engine.rootObjects().first());
         if(!window)return 3;
         // Exercise all pages, dialogs, themes and both narrow/wide layouts.
-        if(!(window->flags()&Qt::WindowCloseButtonHint)||(window->flags()&Qt::FramelessWindowHint))++errors;
+        if(!(window->flags()&Qt::WindowCloseButtonHint)||!(window->flags()&Qt::FramelessWindowHint))++errors;
+        // Repeater delegates are owned by the visual tree, not the window QObject tree.
+        const auto findVisual = [](auto&& self,QQuickItem* parent,const QString& name)->QQuickItem* {
+            if(parent->objectName()==name)return parent;
+            for(auto* child:parent->childItems())if(auto* found=self(self,child,name))return found;
+            return nullptr;
+        };
+        for(int edge=0;edge<8;++edge) {
+            auto* grip=findVisual(findVisual,window->contentItem(),"windowResize"+QString::number(edge));
+            if(!grip||!grip->isEnabled()||grip->width()<=0||grip->height()<=0)++errors;
+        }
         QTimer::singleShot(20,&app,[window,&errors]{auto* button=window->findChild<QObject*>("windowMaximize");if(!button||!QMetaObject::invokeMethod(button,"clicked"))++errors;});
         QTimer::singleShot(40,&app,[window,&errors]{if(window->visibility()!=QWindow::Maximized)++errors;auto* button=window->findChild<QObject*>("windowMaximize");if(button)QMetaObject::invokeMethod(button,"clicked");});
         QTimer::singleShot(60,&app,[window,&errors]{if(window->visibility()!=QWindow::Windowed)++errors;auto* button=window->findChild<QObject*>("windowMinimize");if(!button||!QMetaObject::invokeMethod(button,"clicked"))++errors;});

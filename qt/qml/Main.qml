@@ -5,12 +5,12 @@ import QtQuick.Controls.Basic
 ApplicationWindow {
     id: window
     objectName: "mainWindow"
-    flags: Qt.Window | Qt.WindowTitleHint | Qt.WindowSystemMenuHint | Qt.WindowMinMaxButtonsHint | Qt.WindowCloseButtonHint
+    flags: Qt.Window | Qt.FramelessWindowHint | Qt.WindowSystemMenuHint | Qt.WindowMinMaxButtonsHint | Qt.WindowCloseButtonHint
     visible: true
     width: Math.min(1440, Screen.desktopAvailableWidth)
     height: Math.min(920, Screen.desktopAvailableHeight)
     minimumWidth: 640; minimumHeight: 480
-    title: "MOEXWatch 0.7.1 · Qt"
+    title: "MOEXWatch 0.7.2 · Qt"
     font.family: Theme.family
     font.pixelSize: 14
     color: Theme.canvas
@@ -69,7 +69,7 @@ ApplicationWindow {
                     }
                 }
                 ActionButton { text: window.compact ? "◐" : "Сменить тему"; Accessible.name: "Сменить тему"; Layout.fillWidth: true; implicitWidth: 40; onClicked: backend.dark=!backend.dark }
-                Text { visible: !window.compact; text: "MOEXWatch 0.7.1\nC++ · Qt Quick"; color: Theme.muted; font.pixelSize: 12; lineHeight: 1.5; Layout.topMargin: 8 }
+                Text { visible: !window.compact; text: "MOEXWatch 0.7.2\nC++ · Qt Quick"; color: Theme.muted; font.pixelSize: 12; lineHeight: 1.5; Layout.topMargin: 8 }
             }
         }
         ColumnLayout {
@@ -116,6 +116,32 @@ ApplicationWindow {
                 DecisionDiaryPage { controller: decisionBackend }
                 SettingsPage { controller: backend }
             }
+        }
+    }
+    // Native system resizing preserves platform drag behavior and minimum size.
+    // Eight thin hit areas leave the page and header controls unobstructed.
+    Repeater {
+        model: [Qt.LeftEdge, Qt.RightEdge, Qt.TopEdge, Qt.BottomEdge,
+                Qt.LeftEdge | Qt.TopEdge, Qt.RightEdge | Qt.TopEdge,
+                Qt.LeftEdge | Qt.BottomEdge, Qt.RightEdge | Qt.BottomEdge]
+        delegate: MouseArea {
+            required property int index
+            required property int modelData
+            objectName: "windowResize" + index
+            readonly property bool horizontalEdge: (modelData & (Qt.LeftEdge | Qt.RightEdge)) !== 0
+            readonly property bool verticalEdge: (modelData & (Qt.TopEdge | Qt.BottomEdge)) !== 0
+            x: (modelData & Qt.RightEdge) ? window.width - width : horizontalEdge ? 0 : 6
+            y: (modelData & Qt.BottomEdge) ? window.height - height : verticalEdge ? 0 : 6
+            width: horizontalEdge ? 6 : window.width - 12
+            height: verticalEdge ? 6 : window.height - 12
+            z: 100
+            enabled: window.visibility === Window.Windowed
+            visible: enabled
+            cursorShape: horizontalEdge && verticalEdge
+                ? (((modelData & Qt.LeftEdge) !== 0) === ((modelData & Qt.TopEdge) !== 0) ? Qt.SizeFDiagCursor : Qt.SizeBDiagCursor)
+                : horizontalEdge ? Qt.SizeHorCursor : Qt.SizeVerCursor
+            acceptedButtons: Qt.LeftButton
+            onPressed: window.startSystemResize(modelData)
         }
     }
     OperationDialog { id: operation; controller: backend }
