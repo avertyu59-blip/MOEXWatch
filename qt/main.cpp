@@ -110,7 +110,7 @@ int main(int argc,char* argv[]) {
     QPixmap iconPixmap(48,48);iconPixmap.fill(QColor("#1762c0"));
     {QPainter painter(&iconPixmap);painter.setPen(Qt::white);auto font=painter.font();font.setBold(true);font.setPixelSize(21);painter.setFont(font);painter.drawText(iconPixmap.rect(),Qt::AlignCenter,"MW");}
     const QIcon appIcon(iconPixmap);app.setWindowIcon(appIcon);
-    QSystemTrayIcon tray(appIcon);tray.setToolTip("MOEXWatch 0.7.2");
+    QSystemTrayIcon tray(appIcon);tray.setToolTip("MOEXWatch 0.7.3");
     if(!smoke&&QSystemTrayIcon::isSystemTrayAvailable())tray.show();
     QObject::connect(&signalModule,&SignalsController::notification,&app,[&](const QString& title,const QString& body){
         mainWindow->setProperty("notice",title+" · "+body);
@@ -131,10 +131,34 @@ int main(int argc,char* argv[]) {
         };
         for(int edge=0;edge<8;++edge) {
             auto* grip=findVisual(findVisual,window->contentItem(),"windowResize"+QString::number(edge));
-            if(!grip||!grip->isEnabled()||grip->width()<=0||grip->height()<=0)++errors;
+            if(!grip||!grip->property("enabled").toBool()||grip->width()<=0||grip->height()<=0)++errors;
         }
+        QTimer::singleShot(150,&app,[window,&errors,findVisual]{
+            for(const auto* name:{"headerDragArea","logoDragArea","topDragArea"}) {
+                auto* drag=findVisual(findVisual,window->contentItem(),QString::fromLatin1(name));
+                if(!drag||!drag->isVisible()||drag->width()<=0||drag->height()<=0) {
+                    qWarning()<<"Invalid window drag area"<<name;++errors;continue;
+                }
+                const QRectF dragBounds(drag->mapToScene(QPointF()),drag->size());
+                for(const auto* buttonName:{"windowMinimize","windowMaximize","windowClose"}) {
+                    auto* button=window->findChild<QQuickItem*>(QString::fromLatin1(buttonName));
+                    if(!button||dragBounds.intersects(QRectF(button->mapToScene(QPointF()),button->size()))) {
+                        qWarning()<<"Window drag area overlaps controls"<<name<<buttonName;++errors;
+                    }
+                }
+            }
+        });
         QTimer::singleShot(20,&app,[window,&errors]{auto* button=window->findChild<QObject*>("windowMaximize");if(!button||!QMetaObject::invokeMethod(button,"clicked"))++errors;});
-        QTimer::singleShot(40,&app,[window,&errors]{if(window->visibility()!=QWindow::Maximized)++errors;auto* button=window->findChild<QObject*>("windowMaximize");if(button)QMetaObject::invokeMethod(button,"clicked");});
+        QTimer::singleShot(40,&app,[window,&errors,findVisual]{
+            if(window->visibility()!=QWindow::Maximized)++errors;
+            for(int edge=0;edge<8;++edge) {
+                auto* grip=findVisual(findVisual,window->contentItem(),"windowResize"+QString::number(edge));
+                if(!grip||grip->property("enabled").toBool()) {
+                    qWarning()<<"Resize enabled while maximized"<<edge;++errors;
+                }
+            }
+            if(auto* button=window->findChild<QObject*>("windowMaximize"))QMetaObject::invokeMethod(button,"clicked");
+        });
         QTimer::singleShot(60,&app,[window,&errors]{if(window->visibility()!=QWindow::Windowed)++errors;auto* button=window->findChild<QObject*>("windowMinimize");if(!button||!QMetaObject::invokeMethod(button,"clicked"))++errors;});
         QTimer::singleShot(80,&app,[window,&errors]{if(window->visibility()!=QWindow::Minimized)++errors;window->showNormal();});
         QTimer::singleShot(100,&app,[window,&backend]{window->resize(760,620);window->setProperty("pageIndex",9);backend.setDark(false);});
