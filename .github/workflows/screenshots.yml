@@ -1,13 +1,11 @@
 name: Application screenshots
 on:
   workflow_dispatch:
-  push:
-    branches: [docs/public-presentation]
-    paths: [.github/workflows/screenshots.yml]
 permissions:
   contents: write
 jobs:
   screenshots:
+    if: github.ref_type == 'branch'
     runs-on: windows-2022
     timeout-minutes: 20
     steps:
@@ -20,7 +18,7 @@ jobs:
       - name: Build released UI
         run: |
           cmake -S . -B build-qt -G "Visual Studio 17 2022" -A x64 -DMOEX_BUILD_QT=ON
-          cmake --build build-qt --config Release --parallel 2
+          cmake --build build-qt --config Release --target MOEXWatch-Qt --parallel 2
       - name: Capture real application with synthetic demo data
         shell: pwsh
         env:
@@ -41,6 +39,8 @@ jobs:
           if ($p.ExitCode -ne 0 -or !(Test-Path $out)) { throw 'Light screenshot failed' }
       - name: Save reproducible screenshots
         shell: pwsh
+        env:
+          SCREENSHOT_BRANCH: ${{ github.ref_name }}
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
@@ -48,6 +48,6 @@ jobs:
           git diff --cached --quiet
           if ($LASTEXITCODE -eq 1) {
             git commit -m 'docs: capture actual Qt application with synthetic demo data'
-            git push origin HEAD:${{ github.ref_name }}
+            git push origin "HEAD:refs/heads/$env:SCREENSHOT_BRANCH"
             if ($LASTEXITCODE -ne 0) { throw 'Screenshot push failed' }
           }

@@ -1,9 +1,9 @@
-# MOEXWatch
+# MOEXWatch — анализ акций MOEX и портфель для Windows
 
-[![Свежая версия](https://img.shields.io/github/v/release/avertyu59-blip/MOEXWatch?include_prereleases&sort=semver&label=Свежая%20версия&color=blue)](https://github.com/avertyu59-blip/MOEXWatch/releases)
+[![Свежая версия](https://img.shields.io/github/v/release/avertyu59-blip/MOEXWatch?sort=semver&label=Свежая%20версия&color=blue)](https://github.com/avertyu59-blip/MOEXWatch/releases)
 [![Скачать для Windows 10 x64](https://img.shields.io/badge/Скачать-Windows%2010%20x64-238636)](https://github.com/avertyu59-blip/MOEXWatch/releases)
 
-Настольное приложение на C++20 / Qt Quick (QML) для наблюдения за акциями Московской биржи, ведения портфеля и анализа графиков.
+**Бесплатное настольное приложение для анализа акций Московской биржи (MOEX), портфеля, дивидендов и торговых сигналов.** Написано на C++20 / Qt Quick (QML). Готовая сборка для Windows x64, исходный код и история выпусков доступны в этом репозитории.
 
 ## Скачать свежую версию
 
@@ -13,7 +13,26 @@
 
 При обновлении закройте все старые копии и распакуйте новую сборку целиком в отдельную папку. В новых архивах поставляется только Qt-приложение. Классическая версия исключена; старые выпуски остаются в истории релизов. Общий профиль защищён от одновременной записи. Пользовательские данные хранятся отдельно в `%APPDATA%\MOEXWatch`; перед обновлением можно воспользоваться кнопкой «Резервная копия».
 
-Индикатор версии вверху получает номер из GitHub Releases, включая **Pre-release**, и обновляется после публикации нового выпуска с учётом кэша сервиса. Все предыдущие версии остаются в [истории релизов](https://github.com/avertyu59-blip/MOEXWatch/releases).
+Индикатор версии вверху показывает последний стабильный GitHub Release и обновляется после публикации с учётом кэша сервиса. Тестовые Pre-release доступны отдельно в истории выпусков. Все предыдущие версии остаются в [истории релизов](https://github.com/avertyu59-blip/MOEXWatch/releases).
+
+## Скриншоты
+
+Реальные экраны **MOEXWatch 0.8.0**, снятые в демонстрационном режиме. Все числа на изображениях синтетические: это не текущие котировки и не рекомендации.
+
+[![Обзор: свечной график, индикаторы и список наблюдения](docs/screenshots/overview.png)](docs/screenshots/overview.png)
+
+| Портфель и дивиденды | Светлая тема |
+|---|---|
+| [![Сводка портфеля и открытые позиции](docs/screenshots/portfolio.png)](docs/screenshots/portfolio.png) | [![Портфель в светлой теме](docs/screenshots/portfolio-light.png)](docs/screenshots/portfolio-light.png) |
+
+<details>
+<summary>Сигналы и проверка стратегий</summary>
+
+![Условия сигналов и история](docs/screenshots/signals.png)
+
+![Историческая проверка стратегии](docs/screenshots/strategy.png)
+
+</details>
 
 ## Новое в 0.8.0
 
@@ -112,6 +131,7 @@ CSV-импорт с предварительным просмотром обле
 - [Техническая история версий и устройства приложения](docs/DEVELOPMENT_HISTORY.md).
 - [Актуальный исходный код](https://github.com/avertyu59-blip/MOEXWatch/tree/main).
 - [Все версии и файлы для скачивания](https://github.com/avertyu59-blip/MOEXWatch/releases).
+- [Страница проекта: публикация и обновление скриншотов](docs/PUBLIC_PRESENTATION.md).
 
 Актуальный код проекта находится в ветке `main`. Исходники конкретных выпусков доступны по тегам и в архивах исходного кода соответствующих релизов.
 
