@@ -28,7 +28,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
     dividend_wc.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_WINDOW + 1);
     dividend_wc.lpszClassName = L"MOEXWatchDividendWindow";
     if (!RegisterClassExW(&dividend_wc)) return 1;
-    HWND window = CreateWindowExW(0, wc.lpszClassName, L"MOEX Watch 0.7.0 — аналитика и портфель", WS_OVERLAPPEDWINDOW,
+    HWND window = CreateWindowExW(0, wc.lpszClassName, L"MOEX Watch 0.7.1 — аналитика и портфель", WS_OVERLAPPEDWINDOW,
                                   CW_USEDEFAULT, CW_USEDEFAULT, 1340, 870, nullptr, nullptr, instance, &app);
     if (!window) return 2;
     ShowWindow(window, show); UpdateWindow(window);

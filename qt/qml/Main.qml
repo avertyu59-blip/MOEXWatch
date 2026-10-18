@@ -5,11 +5,12 @@ import QtQuick.Controls.Basic
 ApplicationWindow {
     id: window
     objectName: "mainWindow"
+    flags: Qt.Window | Qt.WindowTitleHint | Qt.WindowSystemMenuHint | Qt.WindowMinMaxButtonsHint | Qt.WindowCloseButtonHint
     visible: true
     width: Math.min(1440, Screen.desktopAvailableWidth)
     height: Math.min(920, Screen.desktopAvailableHeight)
     minimumWidth: 640; minimumHeight: 480
-    title: "MOEXWatch 0.7.0 · Qt"
+    title: "MOEXWatch 0.7.1 · Qt"
     font.family: Theme.family
     font.pixelSize: 14
     color: Theme.canvas
@@ -35,7 +36,8 @@ ApplicationWindow {
     Component.onCompleted: Theme.dark=backend.dark
     Connections { target: backend; function onChanged() { Theme.dark=backend.dark } }
     Connections { target: signalBackend; function onOpenChart() { window.pageIndex=0 } }
-    onClosing: { eventsBackend.shutdown(); backend.shutdown() }
+    onClosing: { eventsBackend.cancel(); backend.cancel() }
+    Shortcut { sequence: "Ctrl+Q"; onActivated: window.close() }
     Shortcut { sequence: "Ctrl+R"; onActivated: backend.busy ? backend.cancel() : backend.refresh() }
     Shortcut { sequence: "Ctrl+1"; onActivated: window.pageIndex=0 }
     Shortcut { sequence: "Ctrl+2"; onActivated: window.pageIndex=1 }
@@ -67,16 +69,23 @@ ApplicationWindow {
                     }
                 }
                 ActionButton { text: window.compact ? "◐" : "Сменить тему"; Accessible.name: "Сменить тему"; Layout.fillWidth: true; implicitWidth: 40; onClicked: backend.dark=!backend.dark }
-                Text { visible: !window.compact; text: "MOEXWatch 0.7.0\nC++ · Qt Quick"; color: Theme.muted; font.pixelSize: 12; lineHeight: 1.5; Layout.topMargin: 8 }
+                Text { visible: !window.compact; text: "MOEXWatch 0.7.1\nC++ · Qt Quick"; color: Theme.muted; font.pixelSize: 12; lineHeight: 1.5; Layout.topMargin: 8 }
             }
         }
         ColumnLayout {
             Layout.fillWidth: true; Layout.fillHeight: true; Layout.margins: window.compact ? 12 : 24; spacing: 12
             RowLayout {
                 Layout.fillWidth: true
-                Text { text: window.pages[window.pageIndex].name; color: Theme.text; font.pixelSize: window.compact ? 22 : 28; font.weight: Font.DemiBold; Layout.fillWidth: true; elide: Text.ElideRight }
+                Item {
+                    Layout.fillWidth: true; implicitHeight: 40
+                    Text { anchors.fill: parent; text: window.pages[window.pageIndex].name; color: Theme.text; font.pixelSize: window.compact ? 22 : 28; font.weight: Font.DemiBold; elide: Text.ElideRight; verticalAlignment: Text.AlignVCenter }
+                    MouseArea { anchors.fill: parent; acceptedButtons: Qt.LeftButton; onPressed: window.startSystemMove(); onDoubleClicked: window.visibility===Window.Maximized ? window.showNormal() : window.showMaximized() }
+                }
                 BusyIndicator { running: backend.busy; visible: running; implicitWidth: 32; implicitHeight: 32 }
                 ActionButton { text: backend.busy ? "Отменить" : "Обновить рынок"; primary: !backend.busy; onClicked: backend.busy ? backend.cancel() : backend.refresh() }
+                ActionButton { objectName: "windowMinimize"; text: "−"; implicitWidth: 40; Accessible.name: "Свернуть окно"; onClicked: window.showMinimized() }
+                ActionButton { objectName: "windowMaximize"; text: window.visibility===Window.Maximized ? "❐" : "□"; implicitWidth: 40; Accessible.name: window.visibility===Window.Maximized ? "Восстановить размер окна" : "Развернуть окно"; onClicked: window.visibility===Window.Maximized ? window.showNormal() : window.showMaximized() }
+                ActionButton { objectName: "windowClose"; text: "×"; implicitWidth: 40; destructive: true; Accessible.name: "Закрыть приложение"; onClicked: window.close() }
             }
             Label { text: backend.status; color: Theme.muted; font.pixelSize: 12; Layout.fillWidth: true; wrapMode: Text.WordWrap }
             Rectangle {
