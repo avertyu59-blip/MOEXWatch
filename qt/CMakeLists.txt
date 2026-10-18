@@ -1,7 +1,10 @@
-find_package(Qt6 6.8.3 EXACT REQUIRED COMPONENTS Quick QuickControls2 Test)
+find_package(Qt6 6.8.3 EXACT REQUIRED COMPONENTS Quick QuickControls2 Test Widgets)
 qt_standard_project_setup(REQUIRES 6.8)
 
-add_library(moex_qt_backend portfolio_controller.cpp portfolio_controller.hpp overview_controller.cpp chart_item.cpp chart_item.hpp)
+add_library(moex_qt_backend portfolio_controller.cpp portfolio_controller.hpp overview_controller.cpp chart_item.cpp chart_item.hpp
+  signals_controller.cpp signals_controller.hpp decision_controller.cpp decision_controller.hpp
+  research_controller.cpp research_controller.hpp events_controller.cpp events_controller.hpp
+  strategy_controller.cpp strategy_controller.hpp)
 target_link_libraries(moex_qt_backend PUBLIC market_core Qt6::Quick)
 target_include_directories(moex_qt_backend PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 if(WIN32)
@@ -17,11 +20,13 @@ endif()
 
 qt_add_executable(moexwatch_quick main.cpp)
 set_target_properties(moexwatch_quick PROPERTIES WIN32_EXECUTABLE TRUE OUTPUT_NAME MOEXWatch-Qt)
-target_link_libraries(moexwatch_quick PRIVATE moex_qt_backend Qt6::QuickControls2)
+target_link_libraries(moexwatch_quick PRIVATE moex_qt_backend Qt6::QuickControls2 Qt6::Widgets)
 set_source_files_properties(qml/Theme.qml PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
 set(qml_files qml/Main.qml qml/Theme.qml qml/ActionButton.qml qml/Surface.qml
   qml/MetricCard.qml qml/PortfolioPage.qml qml/JournalPage.qml qml/OperationDialog.qml
-  qml/LevelsDialog.qml qml/SettingsPage.qml qml/Allocation.qml qml/OverviewPage.qml)
+  qml/LevelsDialog.qml qml/SettingsPage.qml qml/Allocation.qml qml/OverviewPage.qml
+  qml/ScreenerPage.qml qml/SignalsPage.qml qml/PurchasePlanPage.qml qml/DecisionDiaryPage.qml
+  qml/CompanyPage.qml qml/CompanyComparisonPage.qml qml/EventsPage.qml qml/StrategyPage.qml)
 foreach(file IN LISTS qml_files)
   get_filename_component(name ${file} NAME)
   set_source_files_properties(${file} PROPERTIES QT_RESOURCE_ALIAS ${name})
@@ -50,3 +55,13 @@ endif()
 add_test(NAME qt_overview_tests COMMAND qt_overview_tests)
 set_tests_properties(qt_portfolio_tests qt_qml_smoke qt_chart_tests qt_overview_tests PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software" TIMEOUT 30)
 
+
+foreach(module IN ITEMS signals decision research events strategy)
+  add_executable(qt_${module}_tests tests/${module}_controller_tests.cpp)
+  target_link_libraries(qt_${module}_tests PRIVATE moex_qt_backend Qt6::Test)
+  if(MSVC)
+    target_compile_options(qt_${module}_tests PRIVATE /utf-8)
+  endif()
+  add_test(NAME qt_${module}_tests COMMAND qt_${module}_tests)
+  set_tests_properties(qt_${module}_tests PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software" TIMEOUT 30)
+endforeach()

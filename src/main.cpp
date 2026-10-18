@@ -1,6 +1,21 @@
 #include "ui_app.hpp"
+#include "profile_lock.hpp"
+#include "storage.hpp"
+#include <memory>
+#include <exception>
 #ifdef _WIN32
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
+    std::unique_ptr<moexwatch::ProfileLock> profile;
+    try {
+        profile=std::make_unique<moexwatch::ProfileLock>(moexwatch::storage::data_directory());
+        if(!profile->ownsLock()) {
+            MessageBoxW(nullptr,L"Этот профиль уже открыт в другой копии MOEXWatch (Qt или Classic). Закройте её перед запуском.",L"MOEXWatch — профиль занят",MB_OK|MB_ICONINFORMATION);
+            return 3;
+        }
+    } catch(const std::exception&) {
+        MessageBoxW(nullptr,L"Не удалось защитить каталог данных. Приложение закрыто, чтобы избежать одновременной записи.",L"MOEXWatch — ошибка профиля",MB_OK|MB_ICONERROR);
+        return 4;
+    }
     moexwatch::ui::Application app;
     INITCOMMONCONTROLSEX controls{sizeof(controls), ICC_LISTVIEW_CLASSES | ICC_TAB_CLASSES}; InitCommonControlsEx(&controls);
     WNDCLASSEXW wc{}; wc.cbSize = sizeof(wc); wc.lpfnWndProc = moexwatch::ui::Application::window_proc; wc.hInstance = instance;
@@ -13,7 +28,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
     dividend_wc.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_WINDOW + 1);
     dividend_wc.lpszClassName = L"MOEXWatchDividendWindow";
     if (!RegisterClassExW(&dividend_wc)) return 1;
-    HWND window = CreateWindowExW(0, wc.lpszClassName, L"MOEX Watch 0.6.8 — аналитика и портфель", WS_OVERLAPPEDWINDOW,
+    HWND window = CreateWindowExW(0, wc.lpszClassName, L"MOEX Watch 0.7.0 — аналитика и портфель", WS_OVERLAPPEDWINDOW,
                                   CW_USEDEFAULT, CW_USEDEFAULT, 1340, 870, nullptr, nullptr, instance, &app);
     if (!window) return 2;
     ShowWindow(window, show); UpdateWindow(window);

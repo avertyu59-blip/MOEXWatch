@@ -42,7 +42,9 @@ int main(){
  st::atomic_write(root/"dividends_SBER.csv",serialize_dividend_snapshot({"SBER","2026-10-15",{}}));
  st::atomic_write(root/"price_alerts.csv",serialize_price_alerts({{1,"SBER",true,270,true}}));
  st::atomic_write(root/"signal_history.csv",serialize_signal_history({}));
+ for(const auto* extra:{"decision_diary_v1.json","fundamentals_v1.json","corporate_events_v1.json","qt-window-v1.ini"})st::atomic_write(root/extra,"fixture-preserved-bytes");
  const auto backup=st::create_backup(root);
+ for(const auto* extra:{"decision_diary_v1.json","fundamentals_v1.json","corporate_events_v1.json","qt-window-v1.ini"})check(st::read_text(root/extra)==st::read_text(backup/extra),"new workspace files included in backup");
  for(const auto* name:{"watchlist.csv","trades.csv","portfolio_transactions.csv","position_levels.csv","signals.ini","dividends_SBER.csv","price_alerts.csv","signal_history.csv"})check(st::read_text(root/name)==st::read_text(backup/name),"backup bytes verified");
  check(st::read_text(backup/"RESTORE.txt").has_value(),"backup includes restoration instructions");
  st::atomic_write(root/"watchlist.csv","# ticker;target\nLKOH;5000\n");

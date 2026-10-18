@@ -1,10 +1,10 @@
 name: Qt Quick preview
 on:
   push:
-    branches: ["feature/qt-quick-portfolio"]
+    branches: ["main", "feature/qt-quick-portfolio"]
   pull_request:
     branches: ["main"]
-    paths: ["qt/**", "CMakeLists.txt", ".github/workflows/qt-preview.yml", "build_qt_windows.ps1"]
+    paths: ["qt/**", "CMakeLists.txt", ".github/workflows/qt-preview.yml", "build_qt_windows.ps1", ".github/scripts/qt-package.ps1"]
 jobs:
   windows-qt:
     runs-on: windows-2022
@@ -22,49 +22,20 @@ jobs:
         run: cmake --build build-qt --config Release --parallel 2
       - name: Test existing core and Qt transitions
         run: ctest --test-dir build-qt -C Release --output-on-failure
-      - name: Deploy preview and retain classic application
+      - name: Deploy, archive and verify extracted application
         shell: pwsh
         run: |
-          $ErrorActionPreference = 'Stop'
-          New-Item -ItemType Directory -Path qt-preview | Out-Null
-          Copy-Item build-qt/qt/Release/MOEXWatch-Qt.exe qt-preview/
-          Copy-Item build-qt/Release/moexwatch.exe qt-preview/MOEXWatch-Classic.exe
-          windeployqt --release --qmldir qt/qml --compiler-runtime qt-preview/MOEXWatch-Qt.exe
-          if ($LASTEXITCODE -ne 0) { throw 'Qt deployment failed' }
-          $qtRoot = Split-Path (Split-Path (Get-Command windeployqt).Source)
-          Copy-Item "$qtRoot/plugins/platforms/qoffscreen.dll" qt-preview/platforms/
-          $vs = & "${env:ProgramFiles(x86)}/Microsoft Visual Studio/Installer/vswhere.exe" -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
-          $crt = Get-Item "$vs/VC/Redist/MSVC/*/x64/Microsoft.VC143.CRT" | Sort-Object FullName -Descending | Select-Object -First 1
-          if (-not $crt) { throw 'MSVC redistributable runtime directory was not found' }
-          Copy-Item "$($crt.FullName)/*.dll" qt-preview/
-          if (-not (Test-Path qt-preview/msvcp140.dll) -or -not (Test-Path qt-preview/vcruntime140.dll)) { throw 'MSVC runtime was not deployed' }
-          Copy-Item docs/QT_PREVIEW.md qt-preview/README.md
-          Copy-Item docs/QT_THIRD_PARTY.md qt-preview/
-          New-Item -ItemType Directory -Path qt-preview/licenses | Out-Null
-          Invoke-WebRequest https://raw.githubusercontent.com/qt/qtbase/v6.8.3/LICENSES/LGPL-3.0-only.txt -OutFile qt-preview/licenses/LGPL-3.0-only.txt
-          Invoke-WebRequest https://raw.githubusercontent.com/qt/qtbase/v6.8.3/LICENSES/GPL-3.0-only.txt -OutFile qt-preview/licenses/GPL-3.0-only.txt
-          Invoke-WebRequest https://raw.githubusercontent.com/qt/qtbase/v6.8.3/LICENSES/Qt-GPL-exception-1.0.txt -OutFile qt-preview/licenses/Qt-GPL-exception-1.0.txt
+          . ./.github/scripts/qt-package.ps1
+          $source = (Get-Location).Path
+          $package = Join-Path $source 'qt-preview'
+          Deploy-QtPackage -SourceDir $source -BuildDir (Join-Path $source 'build-qt') -PackageDir $package
+          Test-QtPackage -PackageDir $package -LogPrefix (Join-Path $source 'deployed')
+          Compress-Archive qt-preview/* MOEXWatch-Qt-preview-Windows-x64.zip
           git archive --format=zip --output=MOEXWatch-Qt-preview-source.zip HEAD
           if ($LASTEXITCODE -ne 0) { throw 'Source packaging failed' }
-          Compress-Archive qt-preview/* MOEXWatch-Qt-preview-Windows-x64.zip
+          Expand-Archive MOEXWatch-Qt-preview-Windows-x64.zip extracted
+          Test-QtPackage -PackageDir (Join-Path $source 'extracted') -LogPrefix (Join-Path $source 'extracted-smoke')
           Get-FileHash MOEXWatch-Qt-preview-*.zip -Algorithm SHA256 | ForEach-Object { "$($_.Hash.ToLowerInvariant())  $([IO.Path]::GetFileName($_.Path))" } | Set-Content SHA256SUMS.txt
-      - name: Check deployed QML plugins without Qt SDK path
-        shell: pwsh
-        run: |
-          $env:PATH = "$env:SystemRoot\System32;$env:SystemRoot"
-          $env:QT_QPA_PLATFORM = 'offscreen'
-          $env:QT_QUICK_BACKEND = 'software'
-          $env:QT_LOGGING_TO_CONSOLE = '1'
-          Remove-Item Env:QML2_IMPORT_PATH,Env:QML_IMPORT_PATH,Env:QT_PLUGIN_PATH -ErrorAction SilentlyContinue
-          $process = Start-Process qt-preview/MOEXWatch-Qt.exe -ArgumentList '--smoke-test' -PassThru -RedirectStandardOutput deployed-stdout.txt -RedirectStandardError deployed-stderr.txt
-          if (-not $process.WaitForExit(30000)) {
-            Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
-            Get-Content deployed-stderr.txt -ErrorAction SilentlyContinue
-            throw 'Deployed app exceeded 30 seconds'
-          }
-          $process.Refresh()
-          Get-Content deployed-stderr.txt -ErrorAction SilentlyContinue
-          if ($process.ExitCode -ne 0) { throw "Deployed app failed: $($process.ExitCode)" }
       - uses: actions/upload-artifact@v4
         with:
           name: MOEXWatch-Qt-preview-${{ github.sha }}

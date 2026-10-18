@@ -56,6 +56,8 @@ PortfolioController::PortfolioController(std::filesystem::path root,Fetch fetch,
     try {
         const auto dir=pathText(storage_.root());
         if(!QDir().mkpath(dir))throw std::runtime_error("Не удалось создать каталог данных");
+        profile_lock_=std::make_unique<ProfileLock>(storage_.root());
+        if(!profile_lock_->ownsLock())throw std::runtime_error("Другая копия MOEXWatch уже использует этот профиль");
         lock_=std::make_unique<QLockFile>(dir+"/qt-session.lock");
         if(!lock_->tryLock(0))throw std::runtime_error("Другая Qt-копия уже использует этот профиль");
         // Settings failure must never disable financial journal writes.

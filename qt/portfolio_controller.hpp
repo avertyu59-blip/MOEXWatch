@@ -1,5 +1,6 @@
 #pragma once
 #include "app_storage.hpp"
+#include "profile_lock.hpp"
 #include "async_tasks.hpp"
 #include <QAbstractListModel>
 #include <QLockFile>
@@ -53,6 +54,11 @@ public:
     QVariantMap totals() const { return totals_; }
     QVariantList allocation() const { return allocation_; }
     QStringList tickers() const;
+    // Read-only value snapshots for independent analysis modules.
+    std::vector<moexwatch::Instrument> instrumentsSnapshot() const { return instruments_; }
+    std::vector<moexwatch::Candle> indexSnapshot() const { return index_candles_; }
+    std::filesystem::path dataRoot() const { return storage_.root(); }
+    bool demo() const { return demo_; }
     QString status() const { return demo_?QStringLiteral("ДЕМОНСТРАЦИЯ · вымышленные операции и история · ")+status_:status_; }
     QString error() const { return error_; }
     bool writable() const { return writable_; }
@@ -112,6 +118,7 @@ private:
     std::uint64_t request_sequence_{}, active_request_{};
     moexwatch::TaskGroup tasks_;
     std::shared_ptr<moexwatch::CompletionMailbox> mailbox_{std::make_shared<moexwatch::CompletionMailbox>()};
+    std::unique_ptr<moexwatch::ProfileLock> profile_lock_;
     std::unique_ptr<QLockFile> lock_;
     std::unique_ptr<QSettings> settings_;
     QTimer timer_, freshness_timer_;
