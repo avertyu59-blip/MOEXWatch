@@ -47,11 +47,12 @@ std::optional<BacktestSummary> run_backtest(const std::vector<Candle>& stock,
     }
     if (common.size() < 2) return std::nullopt;
 
-    std::vector<Candle> aligned_stock;
-    aligned_stock.reserve(common.size());
-    for (const auto& pair : common) aligned_stock.push_back(pair.first);
-    const auto rsi = rsi_series(aligned_stock);
-    const auto sma200 = sma_series(aligned_stock, 200);
+    // An index outage must not change the stock's indicators: calculate on its
+    // complete chronological history, then look up values on execution dates.
+    const auto rsi = rsi_series(stock);
+    const auto sma200 = sma_series(stock, 200);
+    std::map<std::string, std::size_t> stock_positions;
+    for (std::size_t i = 0; i < stock.size(); ++i) stock_positions.emplace(date_key(stock[i]), i);
     const double fee = commission_percent_per_side / 100.0;
     double cash = starting_capital;
     double shares = 0.0;
@@ -61,8 +62,9 @@ std::optional<BacktestSummary> run_backtest(const std::vector<Candle>& stock,
 
     for (std::size_t i = 0; i + 1 < common.size(); ++i) {
         Analysis analysis;
-        analysis.rsi14 = rsi[i];
-        analysis.sma200 = sma200[i];
+        const auto stock_position = stock_positions.at(date_key(common[i].first));
+        analysis.rsi14 = rsi[stock_position];
+        analysis.sma200 = sma200[stock_position];
         const auto signal = evaluate_signals(analysis, common[i].first.close, target, false, false, settings);
         const double next_open = common[i + 1].first.open;
         if (shares == 0.0 && signal.matched) {

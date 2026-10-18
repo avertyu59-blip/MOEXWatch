@@ -10,8 +10,11 @@ on:
       - "src/**"
       - "include/**"
       - "tests/**"
+      - "qt/**"
+      - "docs/**"
       - ".github/workflows/releases.yml"
       - ".github/scripts/publish-releases.ps1"
+      - ".github/scripts/qt-package.ps1"
       - ".github/release-history.json"
   workflow_dispatch:
 
@@ -38,20 +41,9 @@ jobs:
             const fs = require('fs');
             const version = fs.readFileSync('VERSION.txt', 'utf8').trim();
             if (!/^\d+\.\d+\.\d+$/.test(version)) throw new Error('Invalid VERSION.txt');
-            const history = JSON.parse(fs.readFileSync('.github/release-history.json', 'utf8'));
-            for (const entry of history) {
-              if (!/^\d+\.\d+\.\d+$/.test(entry.version) || !/^[a-f0-9]{40}$/.test(entry.commit))
-                throw new Error('Invalid release history entry');
-            }
-            let candidates;
-            if (context.ref.startsWith('refs/tags/')) {
-              if (context.ref !== `refs/tags/v${version}`) throw new Error('Tag and VERSION.txt differ');
-              candidates = [{version, commit: context.sha, summary: 'Обновление MOEXWatch.'}];
-            } else {
-              candidates = [...history];
-              if (!candidates.some(entry => entry.version === version))
-                candidates.push({version, commit: context.sha, summary: 'Обновление MOEXWatch. Подробности — в README.'});
-            }
+            if (context.ref.startsWith('refs/tags/') && context.ref !== `refs/tags/v${version}`)
+              throw new Error('Tag and VERSION.txt differ');
+            const candidates = [{version, commit: context.sha}];
             const published = await github.paginate(github.rest.repos.listReleases, {...context.repo, per_page: 100});
             const pending = candidates.filter(entry => !published.some(release => release.tag_name === `v${entry.version}` && !release.draft));
             pending.sort((a,b) => {
@@ -73,6 +65,11 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.8.3'
+          arch: 'win64_msvc2022_64'
+          cache: true
       - name: Build, test, package and publish each missing version
         shell: pwsh
         env:
