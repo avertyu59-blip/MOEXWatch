@@ -24,7 +24,7 @@ jobs:
       - name: Capture real application with synthetic demo data
         shell: pwsh
         env:
-          QT_QPA_PLATFORM: offscreen
+          QT_QPA_PLATFORM: windows
           QT_QUICK_BACKEND: software
         run: |
           . ./.github/scripts/qt-package.ps1
