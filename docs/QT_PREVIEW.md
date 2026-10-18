@@ -1,4 +1,4 @@
-# MOEXWatch 0.7.3 — C++ / Qt Quick
+# MOEXWatch 0.8.0 — C++ / Qt Quick
 
 Распакуйте весь ZIP и откройте MOEXWatch-Qt.exe. Qt, Visual Studio и CMake для готового приложения не нужны. Поставляется только Qt-приложение; CSV-импорт операций в Qt пока не перенесён.
 

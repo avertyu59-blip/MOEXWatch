@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(MOEXWatch VERSION 0.7.3 LANGUAGES CXX)
+project(MOEXWatch VERSION 0.8.0 LANGUAGES CXX)
 
 option(MOEX_BUILD_QT "Build the Qt Quick investment workspace (no classic executable)" OFF)
 
@@ -8,8 +8,8 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 # Pure calculations: no Win32, networking, filesystem or provider adapters.
-add_library(moex_domain src/domain_common.cpp src/indicators.cpp src/portfolio_calculations.cpp
-  src/signal_rules.cpp src/backtest.cpp src/dividend_calculations.cpp src/position_cycles.cpp)
+add_library(moex_domain src/domain_common.cpp src/indicators.cpp src/portfolio_calculations.cpp src/portfolio_overview.cpp
+  src/signal_rules.cpp src/backtest.cpp src/dividend_calculations.cpp src/dividend_income.cpp src/position_cycles.cpp)
 target_include_directories(moex_domain PUBLIC include)
 add_library(moex_state src/app_state.cpp)
 target_include_directories(moex_state PUBLIC include)
@@ -33,6 +33,12 @@ endif()
 add_executable(backtest_regression_tests tests/backtest_regression_tests.cpp)
 target_link_libraries(backtest_regression_tests PRIVATE moex_domain)
 add_test(NAME backtest_regression_tests COMMAND backtest_regression_tests)
+
+foreach(module IN ITEMS portfolio_overview dividend_income)
+  add_executable(${module}_tests tests/${module}_tests.cpp)
+  target_link_libraries(${module}_tests PRIVATE moex_domain)
+  add_test(NAME ${module}_tests COMMAND ${module}_tests)
+endforeach()
 
 option(MOEX_DOMAIN_ONLY "Build portable calculations and application state without UI or adapters" OFF)
 if(MOEX_DOMAIN_ONLY)

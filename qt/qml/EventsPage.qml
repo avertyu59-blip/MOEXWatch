@@ -24,9 +24,10 @@ ScrollView {
         RowLayout {
             Layout.fillWidth: true
             Text { text: "Дивиденды и события"; color: Theme.text; font.pixelSize: 24; font.weight: Font.DemiBold; Layout.fillWidth: true }
-            ComboBox { model: root.market.tickers; currentIndex: Math.max(0,root.market.tickers.indexOf(root.market.selectedTicker)); onActivated: root.market.selectedTicker=currentText }
+            ComboBox { model: root.controller.availableTickers; currentIndex: root.controller.availableTickers.indexOf(root.market.selectedTicker); onActivated: root.market.selectedTicker=currentText }
             ActionButton { text: root.controller.busy ? "Отменить" : "Обновить"; onClicked: root.controller.busy ? root.controller.cancel() : root.controller.refresh() }
         }
+        CheckBox { text: "Только открытые позиции"; checked: root.controller.onlyPositions; onToggled: root.controller.onlyPositions=checked }
         Label { text: root.controller.status; color: Theme.muted; wrapMode: Text.WordWrap; Layout.fillWidth: true }
         Label { visible: text.length>0; text: root.controller.error; color: Theme.negative; wrapMode: Text.WordWrap; Layout.fillWidth: true }
         Label { text: "Сумма — на одну акцию. Доходность рассчитывается только по свежей котировке. Прогнозы и рекомендации не являются фактическими выплатами. Дата последней покупки рассчитывается только при известном торговом календаре."; color: Theme.muted; wrapMode: Text.WordWrap; Layout.fillWidth: true }

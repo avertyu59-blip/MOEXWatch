@@ -5,11 +5,25 @@
 #include <QFile>
 #include <QDateTime>
 #include <QDir>
+#include <QLocale>
 #include <future>
 using namespace moexwatch;
 class PortfolioTests:public QObject {
     Q_OBJECT
 private slots:
+    void cashRoundTripAndIsolation() {
+        QTemporaryDir dir;const auto root=std::filesystem::path(dir.path().toStdString());
+        {PortfolioController c(root);QVERIFY(c.setFreeCash("12345,67"));c.setDark(false);QVERIFY(!c.setFreeCash("nan"));QVERIFY(!c.setFreeCash("-1"));QVERIFY(c.addOperation("2026-10-01","SBER",0,"2","100","2"));QCOMPARE(c.totals()["cost"].toString(),QLocale(QLocale::Russian).toString(202.0,'f',2)+" ₽");}
+        {PortfolioController c(root);QCOMPARE(c.totals()["cashRaw"].toString(),QString("12345.67"));QVERIFY(!c.dark());auto backup=AppStorage(root).create_backup();QVERIFY(std::filesystem::exists(backup/"portfolio_cash_v1.json"));}
+        AppStorage(root).atomic_write("portfolio_cash_v1.json","{\"version\":1.5,\"cash\":99}");
+        PortfolioController bad(root);QVERIFY(bad.writable());QVERIFY(!bad.cashWritable());QVERIFY(!bad.setFreeCash("1"));QVERIFY(bad.addOperation("2026-10-02","SBER",0,"1","100","0"));QCOMPARE(bad.totals()["cash"].toString(),QString("—"));QCOMPARE(*AppStorage(root).read_text("portfolio_cash_v1.json"),std::string("{\"version\":1.5,\"cash\":99}"));
+    }
+    void importCannotRewriteExistingOperation() {
+        QTemporaryDir dir;PortfolioController c(dir.path().toStdString());QVERIFY(c.addOperation("2026-10-01","SBER",0,"2","100","0"));
+        const auto revision=c.journalRevision();auto snapshot=c.journalSnapshot();snapshot.transactions.front().price=999;
+        QVERIFY(!c.commitImportedTransactions(snapshot.transactions,revision));QCOMPARE(c.journalSnapshot().transactions.front().price,100.0);
+        QVERIFY(!c.commitImportedTransactions({},revision));
+    }
     void journalRoundTripAndLevels() {
         QTemporaryDir dir;QVERIFY(dir.isValid());const auto root=std::filesystem::path(dir.path().toStdString());
         QString id;

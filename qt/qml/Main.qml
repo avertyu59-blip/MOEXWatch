@@ -10,7 +10,7 @@ ApplicationWindow {
     width: Math.min(1440, Screen.desktopAvailableWidth)
     height: Math.min(920, Screen.desktopAvailableHeight)
     minimumWidth: 640; minimumHeight: 480
-    title: "MOEXWatch 0.7.3 · Qt"
+    title: "MOEXWatch 0.8.0 · Qt"
     font.family: Theme.family
     font.pixelSize: 14
     color: Theme.canvas
@@ -42,6 +42,14 @@ ApplicationWindow {
     Shortcut { sequence: "Ctrl+1"; onActivated: window.pageIndex=0 }
     Shortcut { sequence: "Ctrl+2"; onActivated: window.pageIndex=1 }
     Shortcut { sequence: "Ctrl+3"; onActivated: window.pageIndex=2 }
+    Shortcut { sequence: "Ctrl+4"; onActivated: window.pageIndex=3 }
+    Shortcut { sequence: "Ctrl+5"; onActivated: window.pageIndex=4 }
+    Shortcut { sequence: "Ctrl+6"; onActivated: window.pageIndex=5 }
+    Shortcut { sequence: "Ctrl+7"; onActivated: window.pageIndex=6 }
+    Shortcut { sequence: "Ctrl+8"; onActivated: window.pageIndex=7 }
+    Shortcut { sequence: "Ctrl+9"; onActivated: window.pageIndex=8 }
+    Shortcut { sequence: "Ctrl+0"; onActivated: window.pageIndex=9 }
+    Shortcut { sequence: "Ctrl+I"; enabled: backend.writable; onActivated: portfolioTransfer.open() }
     RowLayout {
         anchors.fill: parent; spacing: 0
         Rectangle {
@@ -72,8 +80,8 @@ ApplicationWindow {
                         contentItem: Text { text: nav.modelData.icon + (window.compact ? "" : "   " + nav.modelData.name); color: Theme.text; font.pixelSize: window.compact ? 22 : 14; verticalAlignment: Text.AlignVCenter; horizontalAlignment: window.compact ? Text.AlignHCenter : Text.AlignLeft }
                     }
                 }
-                ActionButton { text: window.compact ? "◐" : "Сменить тему"; Accessible.name: "Сменить тему"; Layout.fillWidth: true; implicitWidth: 40; onClicked: backend.dark=!backend.dark }
-                Text { visible: !window.compact; text: "MOEXWatch 0.7.3\nC++ · Qt Quick"; color: Theme.muted; font.pixelSize: 12; lineHeight: 1.5; Layout.topMargin: 8 }
+                ActionButton { text: window.compact ? "◐" : Theme.dark ? "Светлая тема" : "Тёмная тема"; Accessible.name: Theme.dark ? "Включить светлую тему" : "Включить тёмную тему"; Layout.fillWidth: true; implicitWidth: 40; onClicked: backend.dark=!backend.dark }
+                Text { visible: !window.compact; text: "MOEXWatch 0.8.0\nC++ · Qt Quick"; color: Theme.muted; font.pixelSize: 12; lineHeight: 1.5; Layout.topMargin: 8 }
             }
         }
         ColumnLayout {
@@ -115,8 +123,8 @@ ApplicationWindow {
                 CompanyComparisonPage { controller: researchBackend; market: backend }
                 EventsPage { controller: eventsBackend; market: backend }
                 StrategyPage { controller: strategyBackend; market: backend }
-                PortfolioPage { controller: backend; onAddRequested: operation.open(); onLevelsRequested: function(id) { levels.positionId=id; levels.open() } }
-                JournalPage { controller: backend; onAddRequested: operation.open() }
+                PortfolioPage { controller: backend; dividends: dividendPortfolioBackend; onImportRequested: portfolioTransfer.open(); onExportRequested: { portfolioTransfer.open(); Qt.callLater(transferBackend.chooseExport) } onAddRequested: operation.open(); onLevelsRequested: function(id) { levels.positionId=id; levels.open() } }
+                JournalPage { controller: backend; onImportRequested: portfolioTransfer.open(); onExportRequested: { portfolioTransfer.open(); Qt.callLater(transferBackend.chooseExport) } onAddRequested: operation.open() }
                 DecisionDiaryPage { controller: decisionBackend }
                 SettingsPage { controller: backend }
             }
@@ -149,6 +157,7 @@ ApplicationWindow {
             onPressed: window.startSystemResize(modelData)
         }
     }
+    PortfolioTransferDialog { id: portfolioTransfer; objectName: "portfolioTransferDialog"; parent: Overlay.overlay; controller: transferBackend }
     OperationDialog { id: operation; controller: backend }
     LevelsDialog { id: levels; controller: backend }
 }

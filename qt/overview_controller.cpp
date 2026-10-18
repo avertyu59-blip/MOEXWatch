@@ -46,7 +46,7 @@ void PortfolioController::setSelectedTicker(QString ticker) {
     if (ticker == selected_ticker_)
         return;
     if (std::none_of(instruments_.begin(), instruments_.end(),
-                     [&](const auto &i) { return str(i.ticker) == ticker; }))
+                     [&](const auto &i) { return str(i.ticker) == ticker; }) && std::none_of(journal_.transactions.begin(),journal_.transactions.end(),[&](const auto& t){return str(t.ticker)==ticker;}))
         return;
     selected_ticker_ = std::move(ticker);
     rebuildOverview();

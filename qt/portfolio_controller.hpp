@@ -35,6 +35,7 @@ class PortfolioController final : public QObject {
     Q_PROPERTY(QString error READ error NOTIFY changed)
     Q_PROPERTY(bool writable READ writable NOTIFY changed)
     Q_PROPERTY(bool busy READ busy NOTIFY changed)
+    Q_PROPERTY(bool cashWritable READ cashWritable NOTIFY changed)
     Q_PROPERTY(bool backupBusy READ backupBusy NOTIFY changed)
     Q_PROPERTY(bool dark READ dark WRITE setDark NOTIFY changed)
     Q_PROPERTY(QString sortKey READ sortKey NOTIFY changed)
@@ -59,6 +60,12 @@ public:
     std::vector<moexwatch::Candle> indexSnapshot() const { return index_candles_; }
     std::filesystem::path dataRoot() const { return storage_.root(); }
     bool demo() const { return demo_; }
+    moexwatch::PortfolioJournal journalSnapshot() const { return journal_; }
+    quint64 journalRevision() const { return journal_revision_; }
+    bool commitImportedTransactions(std::vector<moexwatch::PortfolioTransaction> transactions, quint64 expectedRevision);
+    bool cashWritable() const { return writable_ && cash_valid_ && !demo_ && !closed_; }
+    Q_INVOKABLE bool setFreeCash(QString amount);
+    Q_INVOKABLE QVariantMap incomeWithDividends(double receivedNet,bool receiptsValid)const;
     QString status() const { return demo_?QStringLiteral("ДЕМОНСТРАЦИЯ · вымышленные операции и история · ")+status_:status_; }
     QString error() const { return error_; }
     bool writable() const { return writable_; }
@@ -100,6 +107,12 @@ signals:
 private:
     moexwatch::AppStorage storage_;
     moexwatch::PortfolioJournal journal_;
+    quint64 journal_revision_{};
+    double free_cash_{};
+    std::optional<std::string> cash_snapshot_;
+    bool cash_valid_{true};
+    QString cash_error_;
+    void loadCash();
     std::vector<moexwatch::Instrument> instruments_;
     Fetch fetch_;
     RecordModel positions_, operations_;

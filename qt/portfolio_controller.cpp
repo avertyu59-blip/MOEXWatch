@@ -9,9 +9,14 @@
 #include <QDir>
 #include <QLocale>
 #include <QUrl>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QJsonParseError>
+#include "portfolio_overview.hpp"
 #include <algorithm>
 #include <charconv>
 #include <cmath>
+#include <unordered_map>
 
 using namespace moexwatch;
 namespace {
@@ -95,6 +100,7 @@ PortfolioController::PortfolioController(std::filesystem::path root,Fetch fetch,
             return result;
         };
     }
+    loadCash();
     connect(&timer_,&QTimer::timeout,this,&PortfolioController::drain);timer_.start(50);
     connect(&freshness_timer_,&QTimer::timeout,this,&PortfolioController::rebuild);freshness_timer_.start(60000);
     rebuild();
@@ -116,10 +122,58 @@ QStringList PortfolioController::tickers() const {
     values.removeDuplicates();values.sort();return values;
 }
 bool PortfolioController::persist(PortfolioJournal candidate) {
-    if(!writable_){fail("Запись заблокирована. Сначала восстановите профиль из резервной копии.");return false;}
+    if(!writable_||closed_||demo_){fail("Запись заблокирована. Сначала восстановите профиль из резервной копии.");return false;}
     if(!valid_portfolio_journal(candidate)){fail("Изменение нарушает связи операций и уровней позиции; журнал не изменён.");return false;}
-    try{storage_.save_portfolio(candidate);journal_=std::move(candidate);error_.clear();rebuild();return true;}
+    try{storage_.save_portfolio(candidate);journal_=std::move(candidate);++journal_revision_;error_.clear();rebuild();return true;}
     catch(const std::exception& ex){fail("Журнал не изменён: "+text(ex.what()),true);return false;}
+}
+QVariantMap PortfolioController::incomeWithDividends(double received,bool valid)const {
+    const auto income=valid&&totals_.value("calculationValid").toBool()?calculate_portfolio_income(totals_.value("realizedValue").toDouble(),totals_.value("complete").toBool()?std::optional<double>(totals_.value("unrealizedValue").toDouble()):std::optional<double>{},received):std::optional<PortfolioIncome>{};
+    return {{"realized",income?number(income->realized_with_dividends)+" ₽":QStringLiteral("—")},{"total",income?optional(income->total_profit," ₽"):QStringLiteral("—")}};
+}
+void PortfolioController::loadCash() {
+    if(demo_)return;
+    try {
+        const auto bytes=storage_.read_text("portfolio_cash_v1.json",65536);
+        if(!bytes)return;
+        QJsonParseError error;
+        const auto doc=QJsonDocument::fromJson(QByteArray::fromStdString(*bytes),&error);
+        const auto obj=doc.object();
+        if(error.error!=QJsonParseError::NoError||!doc.isObject()||!obj.value("version").isDouble()||obj.value("version").toDouble()!=1||
+           !obj.value("cash").isDouble()||!std::isfinite(obj.value("cash").toDouble())||
+           obj.value("cash").toDouble()<0||obj.value("cash").toDouble()>1e15)
+            throw std::runtime_error("Файл свободных средств повреждён или имеет неизвестную версию; запись суммы заблокирована.");
+        free_cash_=obj.value("cash").toDouble();cash_snapshot_=bytes;
+    }catch(const std::exception& ex){cash_valid_=false;cash_error_=text(ex.what());}
+}
+bool PortfolioController::setFreeCash(QString amount) {
+    if(!cashWritable()){fail("Сохранение свободных средств недоступно. "+cash_error_);return false;}
+    const auto value=parse(amount);
+    if(!value||*value<0||*value>1e15){fail("Введите неотрицательную конечную сумму свободных средств (не более 10^15 ₽).");return false;}
+    try {
+        if(storage_.read_text("portfolio_cash_v1.json",65536)!=cash_snapshot_) {
+            cash_valid_=false;cash_error_="Файл свободных средств изменён извне. Перезапустите приложение для проверки.";rebuild();return false;
+        }
+        const auto bytes=QJsonDocument(QJsonObject{{"version",1},{"cash",*value}}).toJson();
+        storage_.atomic_write("portfolio_cash_v1.json",bytes.toStdString());
+        cash_snapshot_=bytes.toStdString();free_cash_=*value;cash_error_.clear();error_.clear();rebuild();return true;
+    }catch(const std::exception& ex){fail("Свободные средства не изменены: "+text(ex.what()));return false;}
+}
+bool PortfolioController::commitImportedTransactions(std::vector<PortfolioTransaction> transactions,quint64 expectedRevision) {
+    if(expectedRevision!=journal_revision_){fail("Журнал изменился после предпросмотра. Повторите импорт.");return false;}
+    std::unordered_map<std::string,const PortfolioTransaction*> imported;
+    imported.reserve(transactions.size());
+    for(const auto& row:transactions)if(!imported.emplace(row.id,&row).second){fail("В импорте повторяется ID операции.");return false;}
+    for(const auto& old:journal_.transactions) {
+        const auto it=imported.find(old.id);
+        const auto* found=it==imported.end()?nullptr:it->second;
+        if(!found||found->position_id!=old.position_id||found->date!=old.date||found->ticker!=old.ticker||found->side!=old.side||found->quantity!=old.quantity||found->price!=old.price||found->commission!=old.commission||found->sequence!=old.sequence) {
+            fail("Импорт не должен изменять или удалять существующие операции.");return false;
+        }
+    }
+    auto next=journal_;next.transactions=std::move(transactions);
+    for(const auto& t:next.transactions)next.sequence_watermark=std::max(next.sequence_watermark,t.sequence);
+    return persist(std::move(next));
 }
 bool PortfolioController::addOperation(QString date,QString ticker,int side,QString quantity,QString price,QString fee) {
     ticker=ticker.trimmed().toUpper();date=date.trimmed();
@@ -183,7 +237,7 @@ void PortfolioController::rebuild() {
             {"quantity",number(p.quantity, p.quantity==std::floor(p.quantity)?0:4)},{"average",number(p.average_entry_price)},
             {"price",optional(p.current_price)},{"value",optional(p.market_value)},{"profit",optional(p.unrealized_profit)},
             {"percent",optional(p.unrealized_percent,"%")},{"profitValue",p.unrealized_profit.value_or(0)},
-            {"weightValue",weight.value_or(0)},{"weight",optional(weight,"%")},{"stale",stale},
+            {"weightValue",weight.value_or(0)},{"weight",optional(weight,"%")},{"stale",stale},{"missing",!p.current_price.has_value()},
             {"stop",level!=journal_.levels.end()&&level->stop_loss?QString::number(*level->stop_loss,'g',15):QString{}},
             {"take",level!=journal_.levels.end()&&level->take_profit?QString::number(*level->take_profit,'g',15):QString{}}});
     }
@@ -207,6 +261,25 @@ void PortfolioController::rebuild() {
         {"unrealizedValue",result?result->total_unrealized_profit:0},{"realizedValue",result?result->total_realized_profit:0},
         {"fresh",fresh},{"complete",complete},{"openCount",result?static_cast<int>(result->open_positions):0},
         {"valuationNote",fresh?"По актуальным котировкам":complete?"Последняя оценка · котировки устарели":"Нет котировок всех позиций"}};
+    std::vector<PositionQuoteQuality> quality;
+    if(result)for(const auto& position:result->positions)if(position.quantity>0) {
+        const auto found=std::find_if(instruments_.begin(),instruments_.end(),[&](const auto& item){return item.ticker==position.ticker;});
+        auto state=QuoteQuality::Missing;
+        if(position.market_value&&found!=instruments_.end())state=found->quote_stale||!fresh_moex_quote(found->quote,now)?QuoteQuality::Stale:QuoteQuality::Fresh;
+        quality.push_back({position.ticker,state});
+    }
+    const auto overview=result?calculate_portfolio_overview(*result,quality,cash_valid_?free_cash_:0):std::optional<PortfolioOverview>{};
+    totals_["calculationValid"]=result.has_value();
+    totals_["cost"]=overview?number(overview->remaining_cost)+" ₽":"—";
+    totals_["cash"]=cash_valid_?number(free_cash_)+" ₽":"—";
+    totals_["cashRaw"]=cash_valid_?QString::number(free_cash_,'g',15):QString{};
+    totals_["cashValid"]=cash_valid_;
+    totals_["cashError"]=cash_error_;
+    totals_["totalAssets"]=overview&&cash_valid_?optional(overview->total_assets," ₽"):QStringLiteral("—");
+    totals_["freshCount"]=overview?static_cast<int>(overview->fresh_count):0;
+    totals_["staleCount"]=overview?static_cast<int>(overview->stale_count):0;
+    totals_["missingCount"]=overview?static_cast<int>(overview->missing_count):0;
+    totals_["top3"]=overview?optional(overview->top3_percent," %"):QStringLiteral("—");
     rebuildOverview();
     emit changed();
 }
@@ -284,7 +357,7 @@ void PortfolioController::drain(){
     }
 }
 void PortfolioController::loadDemo(){
-    cancel();tasks_.shutdown();mailbox_->take();writable_=false;demo_=true;error_.clear();journal_={};instruments_.clear();index_candles_.clear();index_stale_=false;index_error_.clear();
+    cancel();tasks_.shutdown();mailbox_->take();writable_=false;demo_=true;free_cash_=0;cash_valid_=true;cash_error_.clear();++journal_revision_;error_.clear();journal_={};instruments_.clear();index_candles_.clear();index_stale_=false;index_error_.clear();
     const char* names[]={"SBER","GAZP","LKOH","YDEX"};
     const double entry[]={265.4,153.7,6410,3520},current[]={282.15,146.32,6845,3560},quantity[]={500,400,100,80};
     const auto stamp=observation_time(QDateTime::currentSecsSinceEpoch());
