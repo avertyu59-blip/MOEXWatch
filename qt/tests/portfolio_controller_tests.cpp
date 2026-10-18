@@ -24,6 +24,12 @@ private slots:
         QVERIFY(!c.commitImportedTransactions(snapshot.transactions,revision));QCOMPARE(c.journalSnapshot().transactions.front().price,100.0);
         QVERIFY(!c.commitImportedTransactions({},revision));
     }
+    void closedJournalTickerSelectionSurvivesRebuildAndRestart() {
+        QTemporaryDir dir;const auto root=std::filesystem::path(dir.path().toStdString());
+        {PortfolioController c(root);QVERIFY(c.addOperation("2026-01-01","DUMMYQ",0,"1","100","0"));QVERIFY(c.addOperation("2026-01-02","DUMMYQ",1,"1","110","0"));}
+        {PortfolioController c(root);c.setSelectedTicker("DUMMYQ");QCOMPARE(c.selectedTicker(),QString("DUMMYQ"));QVERIFY(c.setFreeCash("1"));QCOMPARE(c.selectedTicker(),QString("DUMMYQ"));}
+        PortfolioController restored(root);QCOMPARE(restored.selectedTicker(),QString("DUMMYQ"));
+    }
     void journalRoundTripAndLevels() {
         QTemporaryDir dir;QVERIFY(dir.isValid());const auto root=std::filesystem::path(dir.path().toStdString());
         QString id;
