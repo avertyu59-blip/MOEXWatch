@@ -37,6 +37,13 @@ class PortfolioController final : public QObject {
     Q_PROPERTY(bool backupBusy READ backupBusy NOTIFY changed)
     Q_PROPERTY(bool dark READ dark WRITE setDark NOTIFY changed)
     Q_PROPERTY(QString sortKey READ sortKey NOTIFY changed)
+    Q_PROPERTY(RecordModel* watchlist READ watchlist CONSTANT)
+    Q_PROPERTY(QString selectedTicker READ selectedTicker WRITE setSelectedTicker NOTIFY selectionChanged)
+    Q_PROPERTY(QVariantMap analysis READ analysis NOTIFY chartChanged)
+    Q_PROPERTY(QVariantList chartCandles READ chartCandles NOTIFY chartChanged)
+    Q_PROPERTY(QVariantMap chartLevels READ chartLevels NOTIFY chartChanged)
+    Q_PROPERTY(int chartSessions READ chartSessions WRITE setChartSessions NOTIFY viewChanged)
+    Q_PROPERTY(bool chartComparison READ chartComparison WRITE setChartComparison NOTIFY viewChanged)
 public:
     using Fetch = std::function<moexwatch::MarketRefreshResult(std::vector<moexwatch::Instrument>,std::stop_token)>;
     explicit PortfolioController(std::filesystem::path root = {}, Fetch fetch = {}, QObject* parent = nullptr);
@@ -46,13 +53,26 @@ public:
     QVariantMap totals() const { return totals_; }
     QVariantList allocation() const { return allocation_; }
     QStringList tickers() const;
-    QString status() const { return status_; }
+    QString status() const { return demo_?QStringLiteral("ДЕМОНСТРАЦИЯ · вымышленные операции и история · ")+status_:status_; }
     QString error() const { return error_; }
     bool writable() const { return writable_; }
     bool busy() const { return active_request_ != 0; }
     bool backupBusy() const { return tasks_.running(moexwatch::TaskKind::Backup); }
     bool dark() const { return dark_; }
     QString sortKey() const { return sort_key_; }
+    RecordModel* watchlist() { return &watchlist_; }
+    QString selectedTicker() const { return selected_ticker_; }
+    void setSelectedTicker(QString ticker);
+    QVariantMap analysis() const { return analysis_; }
+    QVariantList chartCandles() const { return chart_candles_; }
+    QVariantMap chartLevels() const { return chart_levels_; }
+    int chartSessions() const { return chart_sessions_; }
+    void setChartSessions(int sessions);
+    bool chartComparison() const { return chart_comparison_; }
+    void setChartComparison(bool comparison);
+    Q_INVOKABLE bool addTicker(QString ticker);
+    Q_INVOKABLE bool removeTicker(QString ticker);
+    Q_INVOKABLE bool setTarget(QString ticker,QString value);
     void setDark(bool value);
     Q_INVOKABLE bool addOperation(QString date, QString ticker, int side, QString quantity, QString price, QString fee);
     Q_INVOKABLE bool deleteOperation(QString id);
@@ -68,16 +88,27 @@ public:
     void loadDemo(); // Explicit demo/smoke mode only; disables journal writes.
 signals:
     void changed();
+    void chartChanged();
+    void selectionChanged();
+    void viewChanged();
 private:
     moexwatch::AppStorage storage_;
     moexwatch::PortfolioJournal journal_;
     std::vector<moexwatch::Instrument> instruments_;
     Fetch fetch_;
     RecordModel positions_, operations_;
+    RecordModel watchlist_;
+    std::vector<moexwatch::Candle> index_candles_;
+    bool index_stale_{true};
+    QString index_error_, selected_ticker_;
+    int chart_sessions_{66};
+    bool chart_comparison_{};
+    QVariantMap analysis_, chart_levels_;
+    QVariantList chart_candles_;
     QVariantMap totals_;
     QVariantList allocation_;
-    QString status_, error_, sort_key_{"ticker"};
-    bool writable_{true}, dark_{true}, closed_{false};
+    QString status_, error_, market_error_, sort_key_{"ticker"};
+    bool writable_{true}, dark_{true}, closed_{false}, demo_{};
     std::uint64_t request_sequence_{}, active_request_{};
     moexwatch::TaskGroup tasks_;
     std::shared_ptr<moexwatch::CompletionMailbox> mailbox_{std::make_shared<moexwatch::CompletionMailbox>()};
@@ -87,5 +118,8 @@ private:
     bool persist(moexwatch::PortfolioJournal candidate);
     void fail(QString text, bool blockWrites = false);
     void rebuild();
+    void rebuildOverview();
+    void synchronizePositions();
+    void saveViewSettings();
     void drain();
 };

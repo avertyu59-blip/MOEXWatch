@@ -1,4 +1,6 @@
 #include "portfolio_controller.hpp"
+#include "chart_item.hpp"
+#include <qqml.h>
 #include <QGuiApplication>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
@@ -29,6 +31,7 @@ int main(int argc,char* argv[]) {
     PortfolioController backend(root);
     if(smoke||demo)backend.loadDemo();
     if(demo&&arguments.contains("--light"))backend.setDark(false);
+    qmlRegisterType<FinancialChart>("MOEXWatch.Charts",1,0,"FinancialChart");
     QQmlApplicationEngine engine;
     engine.rootContext()->setContextProperty("backend",&backend);
     QObject::connect(&engine,&QQmlApplicationEngine::warnings,&app,[&](const QList<QQmlError>& warnings){
@@ -41,8 +44,8 @@ int main(int argc,char* argv[]) {
         auto* window=qobject_cast<QQuickWindow*>(engine.rootObjects().first());
         if(!window)return 3;
         // Exercise all pages, dialogs, themes and both narrow/wide layouts.
-        QTimer::singleShot(100,&app,[window,&backend]{window->resize(760,620);window->setProperty("pageIndex",1);backend.setDark(false);});
-        QTimer::singleShot(200,&app,[window]{window->setProperty("pageIndex",2);});
+        QTimer::singleShot(100,&app,[window,&backend]{window->resize(760,620);window->setProperty("pageIndex",2);backend.setDark(false);});
+        QTimer::singleShot(200,&app,[window]{window->setProperty("pageIndex",3);});
         QTimer::singleShot(300,&app,[window,&backend]{window->resize(1440,920);window->setProperty("pageIndex",0);backend.setDark(true);});
         QTimer::singleShot(400,&app,[window,&errors]{
             auto* dialog=window->findChild<QObject*>("operationDialog");
@@ -55,13 +58,25 @@ int main(int argc,char* argv[]) {
             dialog->setProperty("positionId",backend.positions()->rows().first()["id"]);
             if(!QMetaObject::invokeMethod(dialog,"open"))++errors;
         });
-        QTimer::singleShot(800,&app,[&]{app.exit(errors?4:0);});
+        QTimer::singleShot(700,&app,[window,&backend,&errors]{
+            auto* chart=window->findChild<FinancialChart*>("overviewChart");
+            if(!chart||chart->visibleCount()<2){++errors;return;}
+            chart->zoomAt(1.5,chart->width()/2);
+            chart->panBars(-5);
+            chart->inspectAt(chart->width()/2);
+            if(chart->hovered().isEmpty())++errors;
+            backend.setChartComparison(true);
+            chart->resetView();
+        });
+        QTimer::singleShot(900,&app,[&]{app.exit(errors?4:0);});
     }
     const int screenshot=arguments.indexOf("--screenshot");
     if(screenshot>=0&&screenshot+1<arguments.size()) {
         if(auto* window=qobject_cast<QQuickWindow*>(engine.rootObjects().first())) {
             window->resize(arguments.contains("--narrow")?760:1440,arguments.contains("--narrow")?620:920);
-            if(arguments.contains("--journal"))window->setProperty("pageIndex",1);
+            if(arguments.contains("--journal"))window->setProperty("pageIndex",2);
+            if(arguments.contains("--portfolio"))window->setProperty("pageIndex",1);
+            if(arguments.contains("--comparison"))backend.setChartComparison(true);
             if(arguments.contains("--operation-dialog"))QTimer::singleShot(100,&app,[window]{
                 if(auto* dialog=window->findChild<QObject*>("operationDialog"))QMetaObject::invokeMethod(dialog,"open");
             });

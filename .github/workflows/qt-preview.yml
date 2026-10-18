@@ -1,4 +1,4 @@
-name: Qt Quick portfolio preview
+name: Qt Quick preview
 on:
   push:
     branches: ["feature/qt-quick-portfolio"]

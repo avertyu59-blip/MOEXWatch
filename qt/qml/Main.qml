@@ -36,7 +36,7 @@ ApplicationWindow {
                 anchors.fill: parent; anchors.margins: 12; spacing: 8
                 Text { text: window.compact ? "MW" : "▥  MOEX Watch"; color: Theme.text; font.pixelSize: 21; font.weight: Font.DemiBold; Layout.topMargin: 12; Layout.bottomMargin: 28 }
                 Repeater {
-                    model: [{name:"Портфель",icon:"◫"},{name:"Операции",icon:"≡"},{name:"Настройки",icon:"⚙"}]
+                    model: [{name:"Обзор",icon:"⌁"},{name:"Портфель",icon:"◫"},{name:"Операции",icon:"≡"},{name:"Настройки",icon:"⚙"}]
                     Button {
                         id: nav
                         required property int index
@@ -52,14 +52,14 @@ ApplicationWindow {
                 }
                 Item { Layout.fillHeight: true }
                 ActionButton { text: window.compact ? "◐" : "Сменить тему"; Accessible.name: "Сменить тему"; Layout.fillWidth: true; implicitWidth: 40; onClicked: backend.dark=!backend.dark }
-                Text { visible: !window.compact; text: "Qt Quick preview\nПортфель · этап 1"; color: Theme.muted; font.pixelSize: 12; lineHeight: 1.5; Layout.topMargin: 8 }
+                Text { visible: !window.compact; text: "Qt Quick preview\nОбзор и портфель · этап 2"; color: Theme.muted; font.pixelSize: 12; lineHeight: 1.5; Layout.topMargin: 8 }
             }
         }
         ColumnLayout {
             Layout.fillWidth: true; Layout.fillHeight: true; Layout.margins: window.compact ? 12 : 24; spacing: 16
             RowLayout {
                 Layout.fillWidth: true
-                Text { text: ["Портфель","Журнал операций","Настройки"][window.pageIndex]; color: Theme.text; font.pixelSize: window.compact ? 22 : 28; font.weight: Font.DemiBold; Layout.fillWidth: true; elide: Text.ElideRight }
+                Text { text: ["Обзор рынка","Портфель","Журнал операций","Настройки"][window.pageIndex]; color: Theme.text; font.pixelSize: window.compact ? 22 : 28; font.weight: Font.DemiBold; Layout.fillWidth: true; elide: Text.ElideRight }
                 BusyIndicator { running: backend.busy; visible: running; implicitWidth: 32; implicitHeight: 32 }
                 ActionButton { text: backend.busy ? "Отменить" : "Обновить"; primary: !backend.busy; onClicked: backend.busy ? backend.cancel() : backend.refresh() }
             }
@@ -72,6 +72,7 @@ ApplicationWindow {
             }
             StackLayout {
                 Layout.fillWidth: true; Layout.fillHeight: true; currentIndex: window.pageIndex
+                OverviewPage { controller: backend }
                 PortfolioPage { controller: backend; onAddRequested: operation.open(); onLevelsRequested: function(id) { levels.positionId=id; levels.open() } }
                 JournalPage { controller: backend; onAddRequested: operation.open() }
                 SettingsPage { controller: backend }

@@ -2,6 +2,7 @@
 #include "market_data.hpp"
 #include "observation.hpp"
 #include "storage.hpp"
+#include "indicators.hpp"
 #include <QDate>
 #include <QDateTime>
 #include <QDesktopServices>
@@ -30,6 +31,17 @@ QString pathText(const std::filesystem::path& path) {
     return QString::fromStdString(path.string());
 #endif
 }
+bool validHistory(const std::vector<Candle>& candles) {
+    std::string previous;
+    for(const auto& c:candles){
+        const auto date=c.date.substr(0,10);
+        if(QDate::fromString(text(date),Qt::ISODate).toString(Qt::ISODate)!=text(date)||(!previous.empty()&&date<=previous))return false;
+        if(!std::isfinite(c.open)||!std::isfinite(c.high)||!std::isfinite(c.low)||!std::isfinite(c.close)||!std::isfinite(c.volume)||
+           c.open<=0||c.low<=0||c.high<std::max(c.open,c.close)||c.low>std::min(c.open,c.close)||c.close<=0||c.volume<0)return false;
+        previous=date;
+    }
+    return true;
+}
 }
 int RecordModel::rowCount(const QModelIndex& parent) const { return parent.isValid()?0:static_cast<int>(rows_.size()); }
 QVariant RecordModel::data(const QModelIndex& index,int role) const {
@@ -49,16 +61,30 @@ PortfolioController::PortfolioController(std::filesystem::path root,Fetch fetch,
         // Settings failure must never disable financial journal writes.
         settings_=std::make_unique<QSettings>(dir+"/qt-workspace.ini",QSettings::IniFormat);
         dark_=settings_->value("appearance/dark",true).toBool();
+        selected_ticker_=settings_->value("overview/ticker").toString();
+        const auto sessions=settings_->value("overview/sessions",66).toInt();
+        if(sessions==0||sessions==22||sessions==66||sessions==252)chart_sessions_=sessions;
+        chart_comparison_=settings_->value("overview/comparison",false).toBool();
         journal_=storage_.load_portfolio();
         instruments_=storage_.load_watchlist();
+        synchronizePositions();
+        // Read only this profile's cache. Offline data stays visibly stale.
+        for(auto& item:instruments_)try{if(const auto cache=storage::load_candles(storage_.root(),item.ticker)){
+            item.candles=cache->candles;item.candles_checked_at=cache->checked_at;
+        }}catch(const std::exception& ex){item.error=ex.what();}
+        try{if(const auto cache=storage::load_candles(storage_.root(),"IMOEX"))index_candles_=cache->candles;}
+        catch(const std::exception& ex){index_error_=text(ex.what());}
         status_="Данные загружены. Обновите котировки для оценки позиций.";
     } catch(const std::exception& ex) { fail("Не удалось загрузить профиль: "+text(ex.what()),true); }
     if(!fetch_) {
-        const auto cache=storage_.root();
+        std::filesystem::path cache;
+        try{cache=storage_.root();}catch(...){ /* Startup error already reported; keep UI available. */ }
         fetch_=[cache](std::vector<Instrument> items,std::stop_token stop) {
             MarketRefreshResult result;
 #ifdef _WIN32
             FetchContext context{stop,winhttp_get,std::make_shared<DiagnosticLog>(cache/"logs"/"diagnostic.log"),0,cache};
+            try{result.imoex_candles=fetch_index_candles(context);}
+            catch(const Cancelled&){throw;}catch(const std::exception& ex){result.imoex_error=ex.what();}
             for(const auto& item:items){check_cancelled(stop);result.instruments.push_back(fetch_instrument(item,context));}
 #else
             (void)cache;(void)items;(void)stop;
@@ -85,7 +111,6 @@ void PortfolioController::setDark(bool value) {
 }
 QStringList PortfolioController::tickers() const {
     QStringList values;for(const auto& i:instruments_)values.push_back(text(i.ticker));
-    for(const auto& t:journal_.transactions)values.push_back(text(t.ticker));
     values.removeDuplicates();values.sort();return values;
 }
 bool PortfolioController::persist(PortfolioJournal candidate) {
@@ -136,6 +161,7 @@ void PortfolioController::sortPositions(QString key) {
     sort_key_=std::move(key);rebuild();
 }
 void PortfolioController::rebuild() {
+    synchronizePositions();
     std::vector<Quote> quotes;for(const auto& i:instruments_)quotes.push_back(i.quote);
     const auto result=calculate_portfolio(journal_.transactions,quotes);
     QList<QVariantMap> rows,operations;allocation_.clear();
@@ -179,15 +205,17 @@ void PortfolioController::rebuild() {
         {"unrealizedValue",result?result->total_unrealized_profit:0},{"realizedValue",result?result->total_realized_profit:0},
         {"fresh",fresh},{"complete",complete},{"openCount",result?static_cast<int>(result->open_positions):0},
         {"valuationNote",fresh?"По актуальным котировкам":complete?"Последняя оценка · котировки устарели":"Нет котировок всех позиций"}};
+    rebuildOverview();
     emit changed();
 }
 void PortfolioController::refresh() {
+    if(demo_){status_="Демо работает без сети и не изменяет реальный профиль.";emit changed();return;}
     if(closed_||busy()||tasks_.running(TaskKind::Market))return;
     auto input=instruments_;
     for(const auto& ticker:tickers())if(std::none_of(input.begin(),input.end(),[&](const auto& i){return text(i.ticker)==ticker;})) {
         Instrument i;i.ticker=ticker.toStdString();i.quote.ticker=i.ticker;input.push_back(std::move(i));
     }
-    if(input.empty()){status_="Сначала запишите операцию или добавьте бумаги в классической версии.";emit changed();return;}
+    if(input.empty()){status_="Сначала добавьте тикер на странице «Обзор» или запишите операцию.";emit changed();return;}
     const auto request=++request_sequence_;active_request_=request;
     const auto fetch=fetch_;status_="Обновление котировок MOEX…";
     try{tasks_.start(TaskKind::Market,mailbox_,[input=std::move(input),fetch,request](std::stop_token stop)mutable->BackgroundEvent {
@@ -215,11 +243,27 @@ void PortfolioController::drain(){
             // Only replace quote/history fields: concurrent portfolio edits remain UI-owned.
             for(auto& incoming:result->instruments) {
                 const auto i=std::find_if(instruments_.begin(),instruments_.end(),[&](const auto& old){return old.ticker==incoming.ticker;});
-                if(i==instruments_.end())instruments_.push_back(std::move(incoming));else *i=std::move(incoming);
+                if(i==instruments_.end())continue; // Deleted while loading: never resurrect it.
+                if(incoming.quote.ticker==i->ticker&&(!incoming.quote.last||(std::isfinite(*incoming.quote.last)&&*incoming.quote.last>0))) {
+                    i->quote=std::move(incoming.quote);i->quote_stale=incoming.quote_stale;
+                }else{i->quote_stale=true;incoming.error+="; Некорректная котировка отклонена";}
+                if(!incoming.candles.empty()&&validHistory(incoming.candles)) {
+                    i->candles=std::move(incoming.candles);i->candles_stale=incoming.candles_stale;i->candles_checked_at=std::move(incoming.candles_checked_at);
+                }else{i->candles_stale=true;incoming.error+="; Некорректная история отклонена";}
+                i->error=std::move(incoming.error); // Target and dividend fields remain UI-owned.
             }
+            if(result->imoex_error.empty()&&!result->imoex_candles.empty()&&validHistory(result->imoex_candles)) {
+                index_candles_=std::move(result->imoex_candles);index_stale_=false;index_error_.clear();
+            }else{index_stale_=true;index_error_=result->imoex_error.empty()?"Нет корректной истории IMOEX":text(result->imoex_error);}
             const auto fresh=std::count_if(instruments_.begin(),instruments_.end(),[](const auto& i){return !i.quote_stale&&i.quote.last;});
             status_="Котировки: "+QString::number(fresh)+" / "+QString::number(instruments_.size())+" · проверка "+QTime::currentTime().toString("HH:mm:ss");
-            if(fresh==0)error_="MOEX не вернул актуальные котировки. История и операции сохранены.";
+            if(fresh==0) {
+                market_error_="MOEX не вернул актуальные котировки. История и операции сохранены.";
+                error_=market_error_;
+            }else {
+                if(error_==market_error_)error_.clear();
+                market_error_.clear();
+            }
             rebuild();
         }else if(auto* backupResult=std::get_if<BackupResult>(&event.data)) {
             if(!backupResult->error.empty())fail("Резервная копия: "+text(backupResult->error));
@@ -228,20 +272,31 @@ void PortfolioController::drain(){
         }else if(auto* failure=std::get_if<TaskFailure>(&event.data)) {
             if(failure->kind==TaskKind::Market&&active_request_!=0&&event.request==active_request_) {
                 active_request_=0;status_="Обновление не завершено; предыдущие данные сохранены.";
-                if(!failure->cancelled)error_="Источник недоступен или загрузка завершилась ошибкой. Подробности — в журнале диагностики.";
+                if(!failure->cancelled) {
+                    market_error_="Источник недоступен или загрузка завершилась ошибкой. Подробности — в журнале диагностики.";
+                    error_=market_error_;
+                }
             }
             emit changed();
         }
     }
 }
 void PortfolioController::loadDemo(){
-    cancel();tasks_.shutdown();mailbox_->take();writable_=false;error_.clear();journal_={};instruments_.clear();
+    cancel();tasks_.shutdown();mailbox_->take();writable_=false;demo_=true;error_.clear();journal_={};instruments_.clear();index_candles_.clear();index_stale_=false;index_error_.clear();
     const char* names[]={"SBER","GAZP","LKOH","YDEX"};
     const double entry[]={265.4,153.7,6410,3520},current[]={282.15,146.32,6845,3560},quantity[]={500,400,100,80};
     const auto stamp=observation_time(QDateTime::currentSecsSinceEpoch());
     for(int i=0;i<4;++i){journal_.transactions.push_back({"2026-10-01",names[i],PortfolioSide::Buy,quantity[i],entry[i],0});
-        Instrument item;item.ticker=names[i];item.quote={names[i],current[i],0,stamp.substr(11),stamp};item.quote_stale=false;instruments_.push_back(std::move(item));}
+        Instrument item;item.ticker=names[i];item.quote={names[i],current[i],0,stamp.substr(11),stamp};item.quote_stale=false;
+        double previous=current[i]*0.75;QDate date=QDate::currentDate().addDays(-460);int n=0;
+        while(n<320){date=date.addDays(1);if(date.dayOfWeek()>5)continue;
+            const double close=current[i]*(0.75+0.25*n/319.0+0.035*std::sin(n/9.0+i));
+            item.candles.push_back({date.toString(Qt::ISODate).toStdString(),previous,std::max(previous,close)*1.012,std::min(previous,close)*0.988,close,n%31==0?380000.0:100000.0+10000*std::sin(n/7.0)});previous=close;++n;
+        }
+        item.candles_stale=false;item.candles_checked_at="Демонстрационная история";
+        if(i==0)for(std::size_t k=0;k<item.candles.size();++k){const auto& c=item.candles[k];const auto close=2500.0+k*1.2+45*std::sin(k/11.0);index_candles_.push_back({c.date,close,close+12,close-12,close,1000});}
+        instruments_.push_back(std::move(item));}
     journal_.transactions=identify_portfolio(std::move(journal_.transactions));
     for(const auto& t:journal_.transactions)journal_.sequence_watermark=std::max(journal_.sequence_watermark,t.sequence);
-    status_="ДЕМОНСТРАЦИЯ · вымышленные операции и котировки · запись отключена";rebuild();
+    status_="Запись отключена; реальный профиль не используется.";selected_ticker_="SBER";rebuild();
 }
