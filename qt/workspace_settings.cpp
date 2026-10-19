@@ -1,5 +1,6 @@
 #include "workspace_settings.hpp"
 void WorkspaceSettings::open(const QString &path) {
+    state_ = WorkspaceState{};
     file_ = std::make_unique<QSettings>(path, QSettings::IniFormat);
     bool ok = false;
     const int version = file_->value("format/version", 1).toInt(&ok);
@@ -8,8 +9,8 @@ void WorkspaceSettings::open(const QString &path) {
         return; // Never overwrite a future settings schema.
     state_.dark = file_->value("appearance/dark", true).toBool();
     state_.ticker = file_->value("overview/ticker").toString();
-    const int sessions = file_->value("overview/sessions", 66).toInt();
-    if (sessions == 0 || sessions == 22 || sessions == 66 || sessions == 252)
+    const int sessions = file_->value("overview/sessions", 66).toInt(&ok);
+    if (ok && (sessions == 0 || sessions == 22 || sessions == 66 || sessions == 252))
         state_.sessions = sessions;
     state_.comparison = file_->value("overview/comparison", false).toBool();
 }

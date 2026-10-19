@@ -5,13 +5,16 @@ on:
   pull_request:
     branches: ["main"]
     paths: ["qt/**", "CMakeLists.txt", ".github/workflows/qt-preview.yml", "build_qt_windows.ps1", ".github/scripts/qt-package.ps1"]
+permissions:
+  contents: read
+
 jobs:
   windows-qt:
     runs-on: windows-2022
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
-      - uses: jurplel/install-qt-action@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: jurplel/install-qt-action@a9c63c7c123f3069cff414e7e482d95dfa9d8125 # v4
         with:
           version: '6.8.3'
           arch: 'win64_msvc2022_64'
@@ -41,7 +44,7 @@ jobs:
           Expand-Archive MOEXWatch-Qt-preview-Windows-x64.zip extracted
           Test-QtPackage -PackageDir (Join-Path $source 'extracted') -LogPrefix (Join-Path $source 'extracted-smoke')
           Get-FileHash MOEXWatch-Qt-preview-*.zip -Algorithm SHA256 | ForEach-Object { "$($_.Hash.ToLowerInvariant())  $([IO.Path]::GetFileName($_.Path))" } | Set-Content SHA256SUMS.txt
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: MOEXWatch-Qt-preview-${{ github.sha }}
           path: |

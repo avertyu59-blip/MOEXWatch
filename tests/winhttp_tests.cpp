@@ -20,9 +20,9 @@ struct Server {
             const auto client=accept(listener,nullptr,nullptr);if(client==INVALID_SOCKET){received.set_value();return;}
             DWORD timeout=2000;setsockopt(client,SOL_SOCKET,SO_RCVTIMEO,reinterpret_cast<const char*>(&timeout),sizeof(timeout));
             char request[4096]{};recv(client,request,sizeof(request),0);
-            if(mode!=1){const std::string response=mode==0?"HTTP/1.1 200 OK\r\nContent-Length: 5\r\nConnection: close\r\n\r\nhello":"HTTP/1.1 200 OK\r\nContent-Length: 10000\r\nConnection: close\r\n\r\nx";send(client,response.data(),static_cast<int>(response.size()),0);}
+            if(mode!=1){const std::string response=mode==3?"HTTP/1.1 302 Found\r\nLocation: http://127.0.0.1:1/untrusted\r\nContent-Length: 0\r\nConnection: close\r\n\r\n":mode==0?"HTTP/1.1 200 OK\r\nContent-Length: 5\r\nConnection: close\r\n\r\nhello":"HTTP/1.1 200 OK\r\nContent-Length: 10000\r\nConnection: close\r\n\r\nx";send(client,response.data(),static_cast<int>(response.size()),0);}
             received.set_value();
-            if(mode!=0)cancellable_wait(stop,10s);
+            if(mode==1||mode==2)cancellable_wait(stop,10s);
             shutdown(client,SD_BOTH);closesocket(client);
         });
     }
@@ -31,6 +31,7 @@ struct Server {
 }
 int main(){WSADATA data{};if(WSAStartup(MAKEWORD(2,2),&data))return 1;try{
     {Server server(0);auto response=winhttp_get({"127.0.0.1","/","loopback",server.port,false},{});check(response.status==200&&response.body=="hello","async HTTP round trip");}
+    {Server server(3);auto response=winhttp_get({"127.0.0.1","/","loopback",server.port,false},{});check(response.status==302,"redirect must not be followed");}
     for(int mode:{1,2}){
         Server server(mode);std::atomic<bool> cancelled{};std::exception_ptr failure;
         std::jthread request([&](std::stop_token stop){try{winhttp_get({"127.0.0.1","/","loopback",server.port,false},stop);}catch(const Cancelled&){cancelled=true;}catch(...){failure=std::current_exception();}});

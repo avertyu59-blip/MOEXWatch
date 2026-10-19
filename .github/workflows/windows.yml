@@ -6,13 +6,19 @@ on:
   pull_request:
     branches: ["main"]
 
+permissions:
+  contents: read
+
 jobs:
   build:
     runs-on: windows-2022
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Configure
         run: cmake -S . -B build -G "Visual Studio 17 2022" -A x64 -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded
+      - name: Check signing script and rejected configurations
+        shell: pwsh
+        run: ./.github/scripts/test-signing.ps1
       - name: Build
         run: cmake --build build --config Release
       - name: Test
@@ -21,7 +27,7 @@ jobs:
   portable-calculations:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Configure calculations without UI or adapters
         run: cmake -S . -B domain-build -DMOEX_DOMAIN_ONLY=ON -DCMAKE_BUILD_TYPE=Release
       - name: Build calculations
