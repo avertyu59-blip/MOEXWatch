@@ -42,5 +42,21 @@ int main() {
     f.read();
     rejected([&] { f.write(std::string(101, 'x')); });
     check(*storage::read_text(path) == "new");
+    std::filesystem::create_directory(root / "directory.json");
+    GuardedFile directory(root / "directory.json");
+    rejected([&] { directory.read(); });
+    GuardedFile blocked(root / "blocked.json");
+    blocked.read();
+    blocked.write("original");
+    std::filesystem::remove_all(root / "backups/last-good");
+    storage::atomic_write(root / "backups/last-good", "not a directory");
+    rejected([&] { blocked.write("replacement"); });
+    check(*storage::read_text(root / "blocked.json") == "original");
+    std::error_code error;
+    std::filesystem::create_symlink(path, root / "link.json", error);
+    if (!error) {
+        GuardedFile link(root / "link.json");
+        rejected([&] { link.read(); });
+    }
     std::filesystem::remove_all(root);
 }

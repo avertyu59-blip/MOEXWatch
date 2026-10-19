@@ -145,6 +145,8 @@ bool DecisionController::persist(const QVariantList &next) {
     try {
         file_->write(bytes.toStdString());
     } catch (const std::exception &ex) {
+        if (dynamic_cast<const moexwatch::FileConflict *>(&ex))
+            valid_ = false;
         error_ = QString::fromUtf8(ex.what());
         emit changed();
         return false;

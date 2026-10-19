@@ -1,7 +1,9 @@
 #include "research_controller.hpp"
 #include <QDate>
 #include <QDesktopServices>
+#include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QRegularExpression>
@@ -16,7 +18,7 @@ bool number(const QVariantMap &m, const QString &k) {
     const double n = m.value(k).toDouble(&ok);
     return m.contains(k) && !m.value(k).isNull() && ok && std::isfinite(n);
 }
-QString local(QUrl u) { return u.isLocalFile() ? u.toLocalFile() : QString(); }
+QString local(QUrl u) { return u.isLocalFile() && u.host().isEmpty() ? u.toLocalFile() : QString(); }
 bool https(QString s) {
     QUrl u(s);
     return u.isValid() && u.scheme() == "https" && !u.host().isEmpty() && u.userInfo().isEmpty();
@@ -205,6 +207,8 @@ bool ResearchController::persist(const QList<QJsonObject> &rows) {
     try {
         file_->write(bytes.toStdString());
     } catch (const std::exception &ex) {
+        if (dynamic_cast<const moexwatch::FileConflict *>(&ex))
+            blocked_ = true;
         error_ = QString::fromUtf8(ex.what());
         emit changed();
         return false;
@@ -341,6 +345,22 @@ bool ResearchController::applyImport() {
 bool ResearchController::exportFile(QUrl u) {
     if (local(u).isEmpty()) {
         error_ = "Выберите локальный файл";
+        emit changed();
+        return false;
+    }
+    const QFileInfo target(local(u)), parent(target.absolutePath()), profile(path_);
+    const auto canonicalRoot = QFileInfo(profile.absolutePath()).canonicalFilePath();
+    const auto canonicalParent = parent.canonicalFilePath();
+    auto resolved =
+        target.exists() ? target.canonicalFilePath() : QDir(canonicalParent).filePath(target.fileName());
+    auto base = canonicalRoot;
+#ifdef _WIN32
+    resolved = resolved.toCaseFolded();
+    base = base.toCaseFolded();
+#endif
+    if (target.isSymLink() || (target.exists() && !target.isFile()) || canonicalParent.isEmpty() ||
+        base.isEmpty() || resolved == base || resolved.startsWith(base + '/')) {
+        error_ = "Экспортируйте в обычный файл вне каталога профиля, чтобы не перезаписать рабочие данные";
         emit changed();
         return false;
     }
