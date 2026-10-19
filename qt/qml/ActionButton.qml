@@ -4,7 +4,7 @@ Button {
     id: control
     property bool primary: false
     property bool destructive: false
-    implicitHeight: 40
+    implicitHeight: 44
     implicitWidth: Math.max(104, contentItem.implicitWidth + 32)
     font.family: Theme.family
     font.pixelSize: 14
