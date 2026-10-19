@@ -40,8 +40,8 @@ SignalsController::SignalsController(PortfolioController *market, QObject *paren
         error_ += QStringLiteral("\n") + QString::fromUtf8(e.what()) +
                   QStringLiteral(". Исходный файл сохранён; запись наблюдений заблокирована.");
     }
-    connect(market_, &PortfolioController::changed, this, &SignalsController::rebuild);
-    connect(market_, &PortfolioController::chartChanged, this, &SignalsController::rebuild);
+    connect(market_, &PortfolioController::marketDataChanged, this, &SignalsController::rebuild);
+    connect(market_, &PortfolioController::writableChanged, this, &SignalsController::changed);
     connect(&timer_, &QTimer::timeout, this, [this] {
         if (!market_->busy() && !market_->demo())
             market_->refresh();
@@ -323,7 +323,8 @@ void SignalsController::refreshModels() {
                        {"level", r.level},
                        {"enabled", r.enabled}});
     for (auto it = events_.rbegin(); it != events_.rend(); ++it)
-        history.append({{"date", QString::fromStdString(it->detected_at)},
+        history.append({{"key", QString::fromStdString(it->detected_at+"|"+it->ticker+"|"+it->kind+"|"+it->condition+"|"+it->quote_time)},
+                        {"date", QString::fromStdString(it->detected_at)},
                         {"ticker", QString::fromStdString(it->ticker)},
                         {"kind", QString::fromStdString(it->kind)},
                         {"condition", QString::fromStdString(it->condition)},

@@ -51,6 +51,8 @@ CSV-импорт/экспорт операций в Qt с предпросмот
 
 Исходники: $commit. Контрольные суммы архивов приложены. Предыдущие выпуски сохраняются.
 "@ | Set-Content $notes -Encoding utf8
+    $versionNotes = Join-Path $sourceDir "docs/releases/$version.md"
+    if (Test-Path $versionNotes) { Copy-Item $versionNotes $notes -Force }
     $existingText = gh api "repos/$repository/releases/tags/$tag" 2>$null
     if ($LASTEXITCODE -eq 0) {
         $existing = $existingText | ConvertFrom-Json

@@ -1,5 +1,6 @@
 #pragma once
 #include "portfolio_controller.hpp"
+#include "guarded_file.hpp"
 class DecisionController final : public QObject {
  Q_OBJECT
  Q_PROPERTY(QVariantList entries READ entries NOTIFY changed)
@@ -16,6 +17,7 @@ public:
  Q_INVOKABLE bool deleteDecision(QString id);
  signals: void changed();
 private:
+ std::unique_ptr<moexwatch::GuardedFile> file_;
  bool persist(const QVariantList&);
  void load();
  PortfolioController* portfolio_;

@@ -6,6 +6,7 @@
 namespace moexwatch::storage {
 std::filesystem::path data_directory();
 PortfolioJournal load_portfolio_journal(const std::filesystem::path& root, bool allow_migration = true);
+std::string serialize_portfolio_journal(const PortfolioJournal& journal);
 void save_portfolio_journal(const std::filesystem::path& root,const PortfolioJournal& journal);
 std::optional<std::string> read_text(const std::filesystem::path& path, std::size_t limit = 4U*1024U*1024U);
 void atomic_write(const std::filesystem::path& path, std::string_view content);

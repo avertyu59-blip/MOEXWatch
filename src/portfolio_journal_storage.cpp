@@ -65,6 +65,7 @@ PortfolioJournal decode(std::string_view bytes) {
     return journal;
 }
 }
+std::string serialize_portfolio_journal(const PortfolioJournal& journal){return encode(journal);}
 void save_portfolio_journal(const std::filesystem::path& root,const PortfolioJournal& journal) {
     const auto bytes=encode(journal);
     if(bytes.size()>4U*1024U*1024U)throw std::runtime_error("Журнал превышает 4 МБ; запись отменена, исходный файл сохранён");

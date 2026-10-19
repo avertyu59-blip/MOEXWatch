@@ -44,7 +44,7 @@ private:
   QVariantMap totals_;
   QString error_;
   mutable QString cache_error_;
-  QByteArray persisted_hash_;
+  std::unique_ptr<moexwatch::GuardedFile> file_;
   bool valid_{true};
   QList<QVariantMap> saved_;
   std::map<QString, Candidate> candidates_;

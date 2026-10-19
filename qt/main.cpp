@@ -119,7 +119,7 @@ int main(int argc,char* argv[]) {
     QPixmap iconPixmap(48,48);iconPixmap.fill(QColor("#1762c0"));
     {QPainter painter(&iconPixmap);painter.setPen(Qt::white);auto font=painter.font();font.setBold(true);font.setPixelSize(21);painter.setFont(font);painter.drawText(iconPixmap.rect(),Qt::AlignCenter,"MW");}
     const QIcon appIcon(iconPixmap);app.setWindowIcon(appIcon);
-    QSystemTrayIcon tray(appIcon);tray.setToolTip("MOEXWatch 0.8.0");
+    QSystemTrayIcon tray(appIcon);tray.setToolTip("MOEXWatch 0.8.1");
     if(!smoke&&QSystemTrayIcon::isSystemTrayAvailable())tray.show();
     QObject::connect(&signalModule,&SignalsController::notification,&app,[&](const QString& title,const QString& body){
         mainWindow->setProperty("notice",title+" · "+body);

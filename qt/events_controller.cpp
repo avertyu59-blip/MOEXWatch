@@ -87,8 +87,10 @@ EventsController::EventsController(PortfolioController *market, Fetch fetch,
   }
   connect(market_, &PortfolioController::selectionChanged, this,
           &EventsController::select);
-  connect(market_, &PortfolioController::changed, this,
+  connect(market_, &PortfolioController::marketDataChanged, this,
           &EventsController::rebuild);
+  connect(market_, &PortfolioController::journalChanged, this, &EventsController::rebuild);
+  connect(market_, &PortfolioController::writableChanged, this, &EventsController::changed);
   connect(&timer_, &QTimer::timeout, this, &EventsController::drain);
   timer_.start(30);
   loadCorporate();
@@ -239,7 +241,8 @@ void EventsController::rebuild() {
   for (const auto &e : snapshot_.events) {
     if (only_positions_ && !availableTickers().contains(ticker_))
       continue;
-    QVariantMap row{{"recordDate", q(e.record_date)},
+    QVariantMap row{{"key", ticker_+"|"+q(e.record_date)+"|"+q(e.period)+"|"+q(e.currency)},
+                    {"recordDate", q(e.record_date)},
                     {"lastBuy", q(e.last_buy_date)},
                     {"lastBuyBasis", q(e.last_buy_basis)},
                     {"amount", e.amount_per_share},
