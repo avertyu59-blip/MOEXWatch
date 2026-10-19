@@ -1,4 +1,5 @@
 #include "research_controller.hpp"
+#include "windows_junction.hpp"
 #include <QTest>
 #include <QTemporaryDir>
 #include <QFile>
@@ -17,6 +18,26 @@ std::filesystem::path rootOf(const QTemporaryDir& dir) {
 class ResearchTests:public QObject {Q_OBJECT
 QVariantMap record(QString ticker="SBER") {return {{"ticker",ticker},{"company","Компания"},{"sector","Нефть"},{"standard","IFRS"},{"period","2025"},{"durationMonths",12},{"currency","RUB"},{"unit","million"},{"sourceUrl","https://example.org/report"},{"publicationDate","2026-01-01"},{"checkedDate","2026-01-02"},{"revenue",1000.0},{"netProfit",100.0},{"ebitda",200.0},{"cfo",150.0},{"capex",50.0},{"debt",300.0},{"cash",100.0},{"equity",500.0},{"shares",1000000.0}};}
 private slots:
+#ifdef _WIN32
+void windowsJunctionCannotOverwriteProfile() {
+    QTemporaryDir root, files;
+    PortfolioController market(rootOf(root));
+    ResearchController r(&market);
+    QVERIFY(r.saveRecord(record()));
+    QFile original(root.filePath("fundamentals_v1.json"));
+    QVERIFY(original.open(QIODevice::ReadOnly));
+    const auto before = original.readAll();
+    original.close();
+    TestJunction junction(files.filePath("profile alias"));
+    QVERIFY(junction.create(root.path()));
+    QVERIFY(!r.exportFile(QUrl::fromLocalFile(junction.path + "/fundamentals_v1.json")));
+    QVERIFY(!r.exportFile(QUrl::fromLocalFile(junction.path + "/new.json")));
+    QVERIFY(!QFile::exists(root.filePath("new.json")));
+    QVERIFY(original.open(QIODevice::ReadOnly));
+    QCOMPARE(original.readAll(), before);
+    QVERIFY(r.exportFile(QUrl::fromLocalFile(files.filePath("allowed.json"))));
+}
+#endif
 void externalChangeAndBackup(){QTemporaryDir d;PortfolioController p(rootOf(d));ResearchController c(&p);QVERIFY(c.saveRecord(record()));auto updated=record();updated["netProfit"]=200;QVERIFY(c.saveRecord(updated));QVERIFY(QFile::exists(d.filePath("backups/last-good/fundamentals_v1.json")));QFile f(d.filePath("fundamentals_v1.json"));QVERIFY(f.open(QIODevice::WriteOnly));f.write("external");f.close();QVERIFY(!c.saveRecord(record()));QVERIFY(!c.writable());QVERIFY(f.open(QIODevice::ReadOnly));QCOMPARE(f.readAll(),QByteArray("external"));QCOMPARE(c.card("SBER")["netProfit"].toDouble(),200.0);}
 void formulas(){auto m=ResearchController::calculate(record(),1000);QCOMPARE(m["fcf"].toDouble(),100.0);QCOMPARE(m["netDebtEbitda"].toDouble(),1.0);QCOMPARE(m["pe"].toDouble(),10.0);QCOMPARE(m["evEbitda"].toDouble(),6.0);}
 void injectedDerivedValuesIgnored(){auto m=record();m.remove("netProfit");m["pe"]=1;m["dividendYield"]=999;auto c=ResearchController::calculate(m,1000);QVERIFY(!c.contains("pe"));QVERIFY(!c.contains("dividendYield"));}

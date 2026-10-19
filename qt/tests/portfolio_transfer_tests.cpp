@@ -1,4 +1,5 @@
 #include "portfolio_transfer_controller.hpp"
+#include "windows_junction.hpp"
 #include <QTest>
 #include <QTemporaryDir>
 #include <QFile>
@@ -10,6 +11,25 @@ class PortfolioTransferTests : public QObject {
     const QByteArray header="date;ticker;side;quantity;price;commission\n";
     void write(const QString& path,const QByteArray& data) { QFile file(path); QVERIFY(file.open(QIODevice::WriteOnly)); QCOMPARE(file.write(data),qint64(data.size())); }
 private slots:
+#ifdef _WIN32
+    void windowsJunctionCannotBypassProfileBoundary() {
+        QTemporaryDir root, files;
+        PortfolioController p(std::filesystem::path(root.path().toStdWString()));
+        PortfolioTransferController t(&p);
+        QVERIFY(p.addOperation("2026-01-01", "SBER", 0, "1", "100", "0"));
+        const auto protectedFile = root.filePath("sentinel.csv");
+        write(protectedFile, "unchanged");
+        TestJunction junction(files.filePath("profile alias"));
+        QVERIFY(junction.create(root.path()));
+        QVERIFY(!t.exportFile(junction.path + "/new.csv"));
+        QVERIFY(!t.exportFile(junction.path + "/sentinel.csv"));
+        QVERIFY(!QFile::exists(root.filePath("new.csv")));
+        QFile original(protectedFile);
+        QVERIFY(original.open(QIODevice::ReadOnly));
+        QCOMPARE(original.readAll(), QByteArray("unchanged"));
+        QVERIFY(t.exportFile(files.filePath("allowed.csv")));
+    }
+#endif
     void roundTripUnicodeAndDuplicates() {
         QTemporaryDir root,files; const auto path=files.path()+QString::fromUtf8("/операции.csv");
         write(path,header+"2026-01-01;SBER;BUY;2;100;1\n");

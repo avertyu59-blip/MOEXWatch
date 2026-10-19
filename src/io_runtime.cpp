@@ -12,11 +12,20 @@ bool cancellable_wait(std::stop_token stop,std::chrono::milliseconds duration) {
 namespace {
 std::string safe(std::string_view value){std::string result;for(const char c:value){if(result.size()==64)break;if((c>='a'&&c<='z')||(c>='A'&&c<='Z')||(c>='0'&&c<='9')||c=='.'||c=='_'||c=='-')result+=c;}return result;}
 bool retry_status(unsigned status){return status==408||status==429||status==500||status==502||status==503||status==504;}
+bool regular_or_absent(const std::filesystem::path& path) {
+    std::error_code error;
+    const auto status=std::filesystem::symlink_status(path,error);
+    return (!error||error==std::errc::no_such_file_or_directory)&&
+        !std::filesystem::is_symlink(status)&&
+        (!std::filesystem::exists(status)||std::filesystem::is_regular_file(status));
+}
 }
 void DiagnosticLog::record(std::uint64_t request,std::string_view source,std::string_view stage,unsigned attempt,unsigned code,long long elapsed) noexcept {
     try {
         if(path_.empty())return;
         std::lock_guard lock(mutex_);std::filesystem::create_directories(path_.parent_path());
+        auto one=path_;one+=".1";auto two=path_;two+=".2";
+        if(!regular_or_absent(path_)||!regular_or_absent(one)||!regular_or_absent(two))return;
         std::ostringstream line;
         const auto now=std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now());
         const auto date=std::chrono::floor<std::chrono::days>(now);const std::chrono::year_month_day ymd{date};
@@ -26,7 +35,6 @@ void DiagnosticLog::record(std::uint64_t request,std::string_view source,std::st
             <<" source="<<safe(source)<<" stage="<<safe(stage)<<" attempt="<<attempt<<" code="<<code<<" ms="<<elapsed<<'\n';
         const auto text=line.str();
         if(std::filesystem::exists(path_)&&std::filesystem::file_size(path_)+text.size()>limit_) {
-            auto one=path_;one+=".1";auto two=path_;two+=".2";
             std::error_code ignored;std::filesystem::remove(two,ignored);
             if(std::filesystem::exists(one))std::filesystem::rename(one,two);
             std::filesystem::rename(path_,one);

@@ -11,6 +11,37 @@
 class ModelTests : public QObject {
     Q_OBJECT
   private slots:
+    void invalidPeriodUsesDefault() {
+        QTemporaryDir d;
+        const auto path = d.filePath("settings.ini");
+        for (const auto &value : {QString("broken"), QString("999999999999999999999"),
+                                  QString("-1"), QString("23"), QString("")}) {
+            QSettings file(path, QSettings::IniFormat);
+            file.setValue("overview/sessions", value);
+            file.sync();
+            WorkspaceSettings settings;
+            settings.open(path);
+            QCOMPARE(settings.state().sessions, 66);
+        }
+        QSettings file(path, QSettings::IniFormat);
+        file.setValue("overview/sessions", 0);
+        file.sync();
+        WorkspaceSettings settings;
+        settings.open(path);
+        QCOMPARE(settings.state().sessions, 0);
+    }
+    void openingAnotherProfileResetsState() {
+        QTemporaryDir d;
+        WorkspaceSettings settings;
+        settings.open(d.filePath("first.ini"));
+        settings.state() = {false, "SBER", 252, true};
+        QVERIFY(settings.save());
+        settings.open(d.filePath("second.ini"));
+        QVERIFY(settings.state().dark);
+        QVERIFY(settings.state().ticker.isEmpty());
+        QCOMPARE(settings.state().sessions, 66);
+        QVERIFY(!settings.state().comparison);
+    }
     void identityThroughUpdatesAndSort() {
         RecordModel m;
         QAbstractItemModelTester tester(&m, QAbstractItemModelTester::FailureReportingMode::QtTest);

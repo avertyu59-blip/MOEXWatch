@@ -78,7 +78,9 @@ HttpResponse winhttp_get(const HttpRequest& input,std::stop_token stop) {
     if(!WinHttpSetOption(request.handle,WINHTTP_OPTION_CONTEXT_VALUE,&context,sizeof(context)))fail(GetLastError());
     if(WinHttpSetStatusCallback(request.handle,callback,WINHTTP_CALLBACK_FLAG_ALL_COMPLETIONS|WINHTTP_CALLBACK_FLAG_HANDLES,0)==WINHTTP_INVALID_STATUS_CALLBACK)fail(GetLastError());
     request.subscribed=true;binding.release();
-    DWORD redirect=WINHTTP_OPTION_REDIRECT_POLICY_DISALLOW_HTTPS_TO_HTTP;
+    // A source response must not silently switch the request to another origin.
+    // Redirects are returned as HTTP errors by get_with_retry, without retrying.
+    DWORD redirect=WINHTTP_OPTION_REDIRECT_POLICY_NEVER;
     if(!WinHttpSetOption(request.handle,WINHTTP_OPTION_REDIRECT_POLICY,&redirect,sizeof(redirect)))fail(GetLastError());
     const auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds{20};
     request.prepare();issued(WinHttpSendRequest(request.handle,WINHTTP_NO_ADDITIONAL_HEADERS,0,WINHTTP_NO_REQUEST_DATA,0,0,context));

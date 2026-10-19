@@ -24,6 +24,13 @@ foreach ($release in $releases) {
     ctest --test-dir $buildDir -C Release --output-on-failure
     if ($LASTEXITCODE -ne 0) { throw 'Tests failed' }
     Deploy-QtPackage -SourceDir $sourceDir -BuildDir $buildDir -PackageDir $packageDir
+    $signed = $false
+    if ($env:MOEX_SIGNING_CERT_THUMBPRINT) {
+        & (Join-Path $PSScriptRoot 'sign-windows.ps1') -FilePath (Join-Path $packageDir 'MOEXWatch-Qt.exe') -CertificateThumbprint $env:MOEX_SIGNING_CERT_THUMBPRINT -TimestampUrl $env:MOEX_SIGNING_TIMESTAMP_URL
+        $signed = $true
+    } elseif ($env:MOEX_REQUIRE_SIGNING -eq 'true') {
+        throw 'Signing is required, but no certificate thumbprint is configured'
+    }
     Test-QtPackage -PackageDir $packageDir -LogPrefix (Join-Path $runRoot 'deployed')
     $binaryZip = Join-Path $runRoot "MOEXWatch-$version-Windows-x64.zip"
     $sourceZip = Join-Path $runRoot "MOEXWatch-$version-source.zip"
@@ -32,6 +39,13 @@ foreach ($release in $releases) {
     if ($LASTEXITCODE -ne 0) { throw 'Source archive failed' }
     $extracted = Join-Path $runRoot 'extracted'
     Expand-Archive $binaryZip $extracted
+    if ($signed) {
+        $signature = Get-AuthenticodeSignature -LiteralPath (Join-Path $extracted 'MOEXWatch-Qt.exe')
+        if ($signature.Status -ne 'Valid' -or -not $signature.TimeStamperCertificate -or
+            $signature.SignerCertificate.Thumbprint -ne $env:MOEX_SIGNING_CERT_THUMBPRINT) {
+            throw 'Extracted EXE signature verification failed'
+        }
+    }
     Test-QtPackage -PackageDir $extracted -LogPrefix (Join-Path $runRoot 'extracted')
     $hashFile = Join-Path $runRoot "MOEXWatch-$version-SHA256SUMS.txt"
     @($binaryZip,$sourceZip) | ForEach-Object { "$((Get-FileHash $_ -Algorithm SHA256).Hash.ToLowerInvariant())  $([IO.Path]::GetFileName($_))" } | Set-Content $hashFile -Encoding utf8
@@ -53,6 +67,8 @@ CSV-импорт/экспорт операций в Qt с предпросмот
 "@ | Set-Content $notes -Encoding utf8
     $versionNotes = Join-Path $sourceDir "docs/releases/$version.md"
     if (Test-Path $versionNotes) { Copy-Item $versionNotes $notes -Force }
+    $signatureNote = if ($signed) { 'EXE: Authenticode signature and RFC3161 timestamp verified.' } else { 'EXE: not Authenticode-signed. SHA256 checksums verify archive integrity only.' }
+    Add-Content $notes "`n$signatureNote" -Encoding utf8
     $existingText = gh api "repos/$repository/releases/tags/$tag" 2>$null
     if ($LASTEXITCODE -eq 0) {
         $existing = $existingText | ConvertFrom-Json

@@ -15,6 +15,7 @@ int main(){try{
     auto flaky=[&](const HttpRequest&,std::stop_token){return HttpResponse{++calls<3?503U:200U,"ok"};};
     check(get_with_retry(request,flaky,{},nullptr,7,{3,0ms}).body=="ok"&&calls==3,"transient errors recover within three attempts");
     calls=0;rejects<NetworkFailure>([&]{get_with_retry(request,[&](auto&,auto){++calls;return HttpResponse{403,"denied"};},{},nullptr,0,{3,0ms});});check(calls==1,"403 is not retried");
+    calls=0;rejects<NetworkFailure>([&]{get_with_retry(request,[&](auto&,auto){++calls;return HttpResponse{302,""};},{},nullptr,0,{3,0ms});});check(calls==1,"redirect rejected without retry");
     calls=0;rejects<NetworkFailure>([&]{get_with_retry(request,[&](auto&,auto)->HttpResponse{++calls;throw NetworkFailure("timeout",true,12002);},{},nullptr,0,{3,0ms});});check(calls==3,"transport retries bounded");
     calls=0;rejects<ValidationFailure>([&]{get_with_retry(request,[&](auto&,auto)->HttpResponse{++calls;throw ValidationFailure("bad payload");},{},nullptr,0,{3,0ms});});check(calls==1,"invalid payload not retried");
     std::stop_source cancelled;cancelled.request_stop();
@@ -56,6 +57,20 @@ int main(){try{
     for(const auto& bad:{"2026-02-30;100;110;90;105;1000\n","2026-10-15;100;99;90;105;1000\n","2026-10-15;100;110;90;105;-1\n","2026-10-15;broken;110;90;105;1000\n"})rejects<ValidationFailure>([&]{validate_candle_page(header+bad);});
     rejects<ValidationFailure>([&]{validate_candle_page(header+"2026-10-15;100;110;90;105;1000\n2026-10-15;100;110;90;105;1000\n");});
     input.close();
+#ifndef _WIN32
+    const auto victim=root/"external.txt";
+    {std::ofstream file(victim);file<<"unchanged";}
+    for(const auto& suffix:{"", ".1", ".2"}) {
+        const auto path=root/(std::string("linked.log")+suffix);
+        std::filesystem::create_symlink(victim,path);
+        DiagnosticLog linked(root/"linked.log",512);
+        linked.record(1,"moex","receive_ok");
+        std::ifstream file(victim);std::string bytes((std::istreambuf_iterator<char>(file)),{});
+        check(bytes=="unchanged","diagnostics never write through a file symlink");
+        check(!std::filesystem::exists(root/"linked.log")||std::filesystem::is_symlink(root/"linked.log"),"unsafe rotation path blocks logging");
+        std::filesystem::remove(path);
+    }
+#endif
     std::filesystem::remove_all(root);
     std::cout<<"io_runtime_tests: retries, cancellation, lifecycle, diagnostics and validation passed\n";
 }catch(const std::exception& ex){std::cerr<<ex.what()<<'\n';return 1;}}
