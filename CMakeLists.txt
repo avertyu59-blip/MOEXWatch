@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(MOEXWatch VERSION 0.8.1 LANGUAGES CXX)
+project(MOEXWatch VERSION 0.8.2 LANGUAGES CXX)
 
 option(MOEX_BUILD_QT "Build the Qt Quick investment workspace (no classic executable)" OFF)
 
