@@ -1,7 +1,7 @@
 find_package(Qt6 6.8.3 EXACT REQUIRED COMPONENTS Quick QuickControls2 Test Widgets)
 qt_standard_project_setup(REQUIRES 6.8)
 
-add_library(moex_qt_backend portfolio_controller.cpp portfolio_controller.hpp overview_controller.cpp chart_item.cpp chart_item.hpp
+add_library(moex_qt_backend market_data_service.cpp workspace_settings.cpp record_model.cpp portfolio_controller.cpp portfolio_controller.hpp overview_controller.cpp chart_item.cpp chart_item.hpp
   signals_controller.cpp signals_controller.hpp decision_controller.cpp decision_controller.hpp
   research_controller.cpp research_controller.hpp events_controller.cpp events_controller.hpp
   strategy_controller.cpp strategy_controller.hpp
@@ -88,3 +88,11 @@ foreach(module IN ITEMS portfolio_transfer portfolio_dividends)
   add_test(NAME qt_${module}_tests COMMAND qt_${module}_tests)
   set_tests_properties(qt_${module}_tests PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software" TIMEOUT 30)
 endforeach()
+
+add_executable(qt_record_model_tests tests/record_model_tests.cpp)
+target_link_libraries(qt_record_model_tests PRIVATE moex_qt_backend Qt6::Test)
+if(MSVC)
+ target_compile_options(qt_record_model_tests PRIVATE /utf-8)
+endif()
+add_test(NAME qt_record_model_tests COMMAND qt_record_model_tests)
+set_tests_properties(qt_record_model_tests PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software" TIMEOUT 30)

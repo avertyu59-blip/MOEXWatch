@@ -1,5 +1,6 @@
 #pragma once
 #include "portfolio_controller.hpp"
+#include "guarded_file.hpp"
 #include <QJsonObject>
 #include <QUrl>
 class ResearchController final:public QObject {
@@ -24,6 +25,7 @@ public:
  static QVariantMap calculate(QVariantMap,double marketCapitalization=0);
 signals:void changed();
 private:
+ std::unique_ptr<moexwatch::GuardedFile> file_;
  PortfolioController* market_; QString path_,error_;QList<QJsonObject> data_,pending_; QVariantList preview_;QStringList selected_;bool blocked_=false;
  bool persist(const QList<QJsonObject>&);void load();
 };

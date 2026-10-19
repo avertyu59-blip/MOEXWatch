@@ -1,3 +1,4 @@
+#include "trading_calendar.hpp"
 #include "market_data.hpp"
 #include "storage.hpp"
 #include "market_validation.hpp"
@@ -91,9 +92,8 @@ void fetch_dividend_events(DividendFetchResult& result,FetchContext& context) {
             for (auto& e : history) { e.issuer_url = issuer; e.issuer_checked_at = result.checked_at; e.verification = DividendVerification::Unavailable; }
         }
     } else result.note = "Автоматическая сверка с эмитентом для этой бумаги пока не подключена.";
-    const auto calendar = moex_calendar_2026();
     for (auto& e : history) {
-        const auto buy = dividend_last_buy(e.record_date, calendar);
+        const auto buy = dividend_last_buy(e.record_date, trading_calendar_for(e.record_date));
         if (buy) {
             e.last_buy_date = *buy;
             e.last_buy_basis = "Расчёт T+1, MOEX 2026: https://www.moex.com/n96571 (сверено 15.10.2026)";

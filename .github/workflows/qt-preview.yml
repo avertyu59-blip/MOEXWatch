@@ -18,6 +18,8 @@ jobs:
           cache: true
       - name: Configure Qt application and regression tests
         run: cmake -S . -B build-qt -G "Visual Studio 17 2022" -A x64 -DMOEX_BUILD_QT=ON
+      - name: Verify screenshot build target without capturing images
+        run: cmake --build build-qt --config Release --target moexwatch_quick --parallel 2
       - name: Build
         run: cmake --build build-qt --config Release --parallel 2
       - name: Test existing core and Qt transitions

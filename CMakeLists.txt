@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(MOEXWatch VERSION 0.8.0 LANGUAGES CXX)
+project(MOEXWatch VERSION 0.8.1 LANGUAGES CXX)
 
 option(MOEX_BUILD_QT "Build the Qt Quick investment workspace (no classic executable)" OFF)
 
@@ -9,7 +9,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 # Pure calculations: no Win32, networking, filesystem or provider adapters.
 add_library(moex_domain src/domain_common.cpp src/indicators.cpp src/portfolio_calculations.cpp src/portfolio_overview.cpp
-  src/signal_rules.cpp src/backtest.cpp src/dividend_calculations.cpp src/dividend_income.cpp src/position_cycles.cpp)
+  src/signal_rules.cpp src/backtest.cpp src/dividend_calculations.cpp src/dividend_income.cpp src/position_cycles.cpp src/purchase_plan.cpp)
 target_include_directories(moex_domain PUBLIC include)
 add_library(moex_state src/app_state.cpp)
 target_include_directories(moex_state PUBLIC include)
@@ -34,7 +34,7 @@ add_executable(backtest_regression_tests tests/backtest_regression_tests.cpp)
 target_link_libraries(backtest_regression_tests PRIVATE moex_domain)
 add_test(NAME backtest_regression_tests COMMAND backtest_regression_tests)
 
-foreach(module IN ITEMS portfolio_overview dividend_income)
+foreach(module IN ITEMS portfolio_overview dividend_income purchase_plan)
   add_executable(${module}_tests tests/${module}_tests.cpp)
   target_link_libraries(${module}_tests PRIVATE moex_domain)
   add_test(NAME ${module}_tests COMMAND ${module}_tests)
@@ -58,7 +58,7 @@ if(MSVC)
 else()
   target_compile_options(moex_io PRIVATE -Wall -Wextra -Wpedantic -Wconversion)
 endif()
-add_library(market_core src/profile_lock.cpp src/app_storage.cpp src/user_storage.cpp src/market_validation.cpp src/market_core.cpp src/dividends.cpp src/storage.cpp src/portfolio_csv.cpp src/observation.cpp src/portfolio_identity.cpp src/portfolio_journal_storage.cpp)
+add_library(market_core src/trading_calendar.cpp src/portfolio_service.cpp src/guarded_file.cpp src/profile_lock.cpp src/app_storage.cpp src/user_storage.cpp src/market_validation.cpp src/market_core.cpp src/dividends.cpp src/storage.cpp src/portfolio_csv.cpp src/observation.cpp src/portfolio_identity.cpp src/portfolio_journal_storage.cpp)
 target_include_directories(market_core PUBLIC include)
 target_link_libraries(market_core PUBLIC moex_domain moex_state moex_io)
 if(WIN32)
@@ -194,3 +194,11 @@ if(MSVC)
 endif()
 add_test(NAME profile_lock_tests COMMAND profile_lock_tests)
 set_tests_properties(profile_lock_tests PROPERTIES TIMEOUT 20)
+
+add_executable(guarded_file_tests tests/guarded_file_tests.cpp)
+target_link_libraries(guarded_file_tests PRIVATE market_core)
+add_test(NAME guarded_file_tests COMMAND guarded_file_tests)
+
+add_executable(portfolio_service_tests tests/portfolio_service_tests.cpp)
+target_link_libraries(portfolio_service_tests PRIVATE market_core)
+add_test(NAME portfolio_service_tests COMMAND portfolio_service_tests)

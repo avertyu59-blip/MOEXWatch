@@ -15,58 +15,56 @@ QString str(std::string_view value) {
 QVariant value(std::optional<double> n) { return n && std::isfinite(*n) ? QVariant(*n) : QVariant{}; }
 } // namespace
 void PortfolioController::synchronizePositions() {
-    const auto portfolio = calculate_portfolio(journal_.transactions, {});
+    const auto portfolio = calculate_portfolio(portfolio_.journal().transactions, {});
     if (!portfolio)
         return;
     for (const auto &position : portfolio->positions)
         if (position.quantity > 0 &&
-            std::none_of(instruments_.begin(), instruments_.end(),
+            std::none_of(market_.instruments().begin(), market_.instruments().end(),
                          [&](const auto &i) { return i.ticker == position.ticker; })) {
             Instrument item;
             item.ticker = position.ticker;
             item.quote.ticker = item.ticker;
-            instruments_.push_back(std::move(item));
+            market_.instruments().push_back(std::move(item));
         }
 }
 void PortfolioController::saveViewSettings() {
-    if (!settings_)
-        return;
-    settings_->setValue("overview/ticker", selected_ticker_);
-    settings_->setValue("overview/sessions", chart_sessions_);
-    settings_->setValue("overview/comparison", chart_comparison_);
-    settings_->sync();
-    if (settings_->status() != QSettings::NoError) {
-        error_ = "Настройки обзора действуют только до закрытия: файл настроек "
-                 "недоступен.";
+    if (!workspace_.save()) {
+        error_ = "Настройки обзора действуют только до закрытия: файл настроек недоступен.";
+        emit statusChanged();
         emit changed();
     }
 }
+
 void PortfolioController::setSelectedTicker(QString ticker) {
     ticker = ticker.trimmed().toUpper();
-    if (ticker == selected_ticker_)
+    if (ticker == workspace_.state().ticker)
         return;
-    if (std::none_of(instruments_.begin(), instruments_.end(),
-                     [&](const auto &i) { return str(i.ticker) == ticker; }) && std::none_of(journal_.transactions.begin(),journal_.transactions.end(),[&](const auto& t){return str(t.ticker)==ticker;}))
+    if (std::none_of(market_.instruments().begin(), market_.instruments().end(),
+                     [&](const auto &i) { return str(i.ticker) == ticker; }) &&
+        std::none_of(portfolio_.journal().transactions.begin(), portfolio_.journal().transactions.end(),
+                     [&](const auto &t) { return str(t.ticker) == ticker; }))
         return;
-    selected_ticker_ = std::move(ticker);
+    workspace_.state().ticker = std::move(ticker);
     rebuildOverview();
     saveViewSettings();
     emit selectionChanged();
+    emit statusChanged();
     emit changed();
 }
 void PortfolioController::setChartSessions(int sessions) {
     if (sessions != 0 && sessions != 22 && sessions != 66 && sessions != 252)
         return;
-    if (chart_sessions_ == sessions)
+    if (workspace_.state().sessions == sessions)
         return;
-    chart_sessions_ = sessions;
+    workspace_.state().sessions = sessions;
     saveViewSettings();
     emit viewChanged();
 }
 void PortfolioController::setChartComparison(bool comparison) {
-    if (chart_comparison_ == comparison)
+    if (workspace_.state().comparison == comparison)
         return;
-    chart_comparison_ = comparison;
+    workspace_.state().comparison = comparison;
     saveViewSettings();
     emit viewChanged();
 }
@@ -81,16 +79,16 @@ bool PortfolioController::addTicker(QString ticker) {
         fail("Тикер должен содержать допустимые символы, например SBER.");
         return false;
     }
-    if (std::any_of(instruments_.begin(), instruments_.end(),
+    if (std::any_of(market_.instruments().begin(), market_.instruments().end(),
                     [&](const auto &i) { return str(i.ticker) == ticker; })) {
         setSelectedTicker(ticker);
         return true;
     }
-    if (instruments_.size() >= 30) {
+    if (market_.instruments().size() >= 30) {
         fail("В списке наблюдения допускается не более 30 бумаг.");
         return false;
     }
-    auto next = instruments_;
+    auto next = market_.instruments();
     Instrument item;
     item.ticker = ticker.toStdString();
     item.quote.ticker = item.ticker;
@@ -101,10 +99,11 @@ bool PortfolioController::addTicker(QString ticker) {
         fail("Наблюдение не изменено: " + str(ex.what()), true);
         return false;
     }
-    instruments_ = std::move(next);
+    market_.replace(std::move(next));
     error_.clear();
     rebuild();
     setSelectedTicker(ticker);
+    emit marketDataChanged();
     return true;
 }
 bool PortfolioController::removeTicker(QString ticker) {
@@ -112,14 +111,14 @@ bool PortfolioController::removeTicker(QString ticker) {
         fail("Наблюдения доступны только для чтения.");
         return false;
     }
-    const auto position = calculate_portfolio(journal_.transactions, {});
+    const auto position = calculate_portfolio(portfolio_.journal().transactions, {});
     if (position && std::any_of(position->positions.begin(), position->positions.end(),
                                 [&](const auto &p) { return str(p.ticker) == ticker && p.quantity > 0; })) {
         fail("Бумага нужна для оценки открытой позиции. Закройте позицию в журнале "
              "перед удалением из наблюдения.");
         return false;
     }
-    auto next = instruments_;
+    auto next = market_.instruments();
     const auto oldSize = next.size();
     std::erase_if(next, [&](const auto &i) { return str(i.ticker) == ticker; });
     if (next.size() == oldSize)
@@ -130,10 +129,11 @@ bool PortfolioController::removeTicker(QString ticker) {
         fail("Наблюдение не изменено: " + str(ex.what()), true);
         return false;
     }
-    instruments_ = std::move(next);
+    market_.replace(std::move(next));
     error_.clear();
     rebuild();
     saveViewSettings();
+    emit marketDataChanged();
     return true;
 }
 bool PortfolioController::setTarget(QString ticker, QString input) {
@@ -151,7 +151,7 @@ bool PortfolioController::setTarget(QString ticker, QString input) {
         }
         target = number;
     }
-    auto next = instruments_;
+    auto next = market_.instruments();
     const auto i =
         std::find_if(next.begin(), next.end(), [&](const auto &item) { return str(item.ticker) == ticker; });
     if (i == next.end()) {
@@ -165,26 +165,34 @@ bool PortfolioController::setTarget(QString ticker, QString input) {
         fail("Цель не сохранена: " + str(ex.what()), true);
         return false;
     }
-    instruments_ = std::move(next);
+    market_.replace(std::move(next));
     error_.clear();
     rebuildOverview();
+    emit marketDataChanged();
+    emit statusChanged();
     emit changed();
     return true;
 }
 void PortfolioController::rebuildOverview() {
-    const auto previousSelection = selected_ticker_;
-    if(std::none_of(instruments_.begin(),instruments_.end(),[&](const auto& i){return str(i.ticker)==selected_ticker_;}) &&
-       std::any_of(journal_.transactions.begin(),journal_.transactions.end(),[&](const auto& operation){return str(operation.ticker)==selected_ticker_;})) {
-        Instrument instrument;instrument.ticker=selected_ticker_.toStdString();instrument.quote.ticker=instrument.ticker;
-        instruments_.push_back(std::move(instrument));
+    const auto previousSelection = workspace_.state().ticker;
+    if (std::none_of(market_.instruments().begin(), market_.instruments().end(),
+                     [&](const auto &i) { return str(i.ticker) == workspace_.state().ticker; }) &&
+        std::any_of(
+            portfolio_.journal().transactions.begin(), portfolio_.journal().transactions.end(),
+            [&](const auto &operation) { return str(operation.ticker) == workspace_.state().ticker; })) {
+        Instrument instrument;
+        instrument.ticker = workspace_.state().ticker.toStdString();
+        instrument.quote.ticker = instrument.ticker;
+        market_.instruments().push_back(std::move(instrument));
     }
-    if (std::none_of(instruments_.begin(), instruments_.end(),
-                     [&](const auto &i) { return str(i.ticker) == selected_ticker_; })) {
-        selected_ticker_ = instruments_.empty() ? QString{} : str(instruments_.front().ticker);
+    if (std::none_of(market_.instruments().begin(), market_.instruments().end(),
+                     [&](const auto &i) { return str(i.ticker) == workspace_.state().ticker; })) {
+        workspace_.state().ticker =
+            market_.instruments().empty() ? QString{} : str(market_.instruments().front().ticker);
     }
     const auto now = QDateTime::currentSecsSinceEpoch();
     QList<QVariantMap> rows;
-    for (const auto &i : instruments_) {
+    for (const auto &i : market_.instruments()) {
         const auto result = analyze(i.candles);
         const bool fresh = !i.quote_stale && fresh_moex_quote(i.quote, now);
         const auto state = i.quote.last ? (fresh ? QStringLiteral("Актуальная котировка")
@@ -201,9 +209,10 @@ void PortfolioController::rebuildOverview() {
         watchlist_.replace(std::move(rows));
     QVariantMap info, levels{{"average", 0.0}, {"stop", 0.0}, {"take", 0.0}};
     QVariantList candles;
-    const auto selected = std::find_if(instruments_.begin(), instruments_.end(),
-                                       [&](const auto &i) { return str(i.ticker) == selected_ticker_; });
-    if (selected != instruments_.end()) {
+    const auto selected =
+        std::find_if(market_.instruments().begin(), market_.instruments().end(),
+                     [&](const auto &i) { return str(i.ticker) == workspace_.state().ticker; });
+    if (selected != market_.instruments().end()) {
         const auto &i = *selected;
         const auto result = analyze(i.candles);
         const bool quoteFresh = !i.quote_stale && fresh_moex_quote(i.quote, now);
@@ -229,14 +238,14 @@ void PortfolioController::rebuildOverview() {
                 {"historyTime", str(i.candles_checked_at)},
                 {"sourceTime", str(i.quote.source_timestamp)},
                 {"indexStatus",
-                 index_stale_ ? "IMOEX: сохранённые / неполные данные" : "IMOEX: история обновлена"},
-                {"indexError", index_error_},
+                 market_.indexStale() ? "IMOEX: сохранённые / неполные данные" : "IMOEX: история обновлена"},
+                {"indexError", str(market_.indexError())},
                 {"dataError", str(i.error)},
                 {"candleCount", static_cast<int>(i.candles.size())}};
         const auto sma20 = sma_series(i.candles, 20), sma50 = sma_series(i.candles, 50),
                    sma200 = sma_series(i.candles, 200), rsi = rsi_series(i.candles);
         std::map<std::string, double> benchmark;
-        for (const auto &c : index_candles_)
+        for (const auto &c : market_.index())
             benchmark[c.date.substr(0, 10)] = c.close;
         for (std::size_t n = 0; n < i.candles.size(); ++n) {
             const auto &c = i.candles[n];
@@ -254,14 +263,14 @@ void PortfolioController::rebuildOverview() {
                 row["benchmark"] = found->second;
             candles.push_back(row);
         }
-        if (const auto portfolio = calculate_portfolio(journal_.transactions, {}))
+        if (const auto portfolio = calculate_portfolio(portfolio_.journal().transactions, {}))
             for (const auto &p : portfolio->positions)
                 if (p.ticker == i.ticker && p.quantity > 0) {
                     levels["average"] = p.average_entry_price;
                     const auto level =
-                        std::find_if(journal_.levels.begin(), journal_.levels.end(),
+                        std::find_if(portfolio_.journal().levels.begin(), portfolio_.journal().levels.end(),
                                      [&](const auto &l) { return l.position_id == p.position_id; });
-                    if (level != journal_.levels.end()) {
+                    if (level != portfolio_.journal().levels.end()) {
                         levels["stop"] = level->stop_loss.value_or(0);
                         levels["take"] = level->take_profit.value_or(0);
                     }
@@ -274,6 +283,6 @@ void PortfolioController::rebuildOverview() {
         chart_candles_ = std::move(candles);
         emit chartChanged();
     }
-    if (previousSelection != selected_ticker_)
+    if (previousSelection != workspace_.state().ticker)
         emit selectionChanged();
 }

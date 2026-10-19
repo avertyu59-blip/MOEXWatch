@@ -1,4 +1,5 @@
 #include "portfolio_dividends_controller.hpp"
+#include "trading_calendar.hpp"
 #include "market_core.hpp"
 #include "storage.hpp"
 #include <QCryptographicHash>
@@ -62,7 +63,7 @@ bool validReceipt(const QVariantMap &r) {
              cutoff = r.value("cutoff").toString();
   const QUrl source(r.value("source").toString());
   const auto expectedCutoff =
-      dividend_last_buy(record.toStdString(), moex_calendar_2026());
+      dividend_last_buy(record.toStdString(), trading_calendar_for(record.toStdString()));
   if (QUuid(id).isNull() || QUuid(id).toString(QUuid::WithoutBraces) != id ||
       !valid_ticker(ticker.toStdString()) || ticker != ticker.toUpper() ||
       !date(record) || !date(cutoff) || !expectedCutoff ||
@@ -121,20 +122,17 @@ bool validReceipt(const QVariantMap &r) {
 PortfolioDividendsController::PortfolioDividendsController(
     PortfolioController *m, QObject *p)
     : QObject(p), market_(m) {
-  connect(m, &PortfolioController::changed, this,
+  connect(m, &PortfolioController::journalChanged, this,
           &PortfolioDividendsController::reload);
+  connect(m, &PortfolioController::writableChanged, this, &PortfolioDividendsController::changed);
   load();
   rebuild();
 }
 void PortfolioDividendsController::load() {
   try {
-    const auto bytes = storage::read_text(
-        market_->dataRoot() / "portfolio_dividend_receipts_v1.json",
-        2 * 1024 * 1024);
-    if (!bytes)
-      return;
-    persisted_hash_ = QCryptographicHash::hash(
-        QByteArray::fromStdString(*bytes), QCryptographicHash::Sha256);
+    file_=std::make_unique<GuardedFile>(market_->dataRoot()/"portfolio_dividend_receipts_v1.json",2*1024*1024);
+    const auto bytes=file_->read();
+    if(!bytes)return;
     QJsonParseError e;
     auto doc = QJsonDocument::fromJson(QByteArray::fromStdString(*bytes), &e);
     auto root = doc.object();
@@ -200,7 +198,7 @@ PortfolioDividendsController::calculateCandidates() const {
           continue;
         auto entitlement = calculate_dividend_entitlement(
             ticker.toStdString(), event, journal.transactions,
-            moex_calendar_2026(), today);
+            trading_calendar_for(event.record_date), today);
         if (entitlement.status != DividendEntitlementStatus::Available ||
             !entitlement.quantity || *entitlement.quantity <= 0 ||
             *entitlement.quantity > 1e12 || event.amount_per_share > 1e12 ||
@@ -336,18 +334,6 @@ bool PortfolioDividendsController::save(const QList<QVariantMap> &candidate) {
     return false;
   }
   try {
-    const auto disk = storage::read_text(
-        market_->dataRoot() / "portfolio_dividend_receipts_v1.json",
-        2 * 1024 * 1024);
-    const auto hash =
-        disk ? QCryptographicHash::hash(QByteArray::fromStdString(*disk),
-                                        QCryptographicHash::Sha256)
-             : QByteArray{};
-    if (hash != persisted_hash_) {
-      valid_ = false;
-      throw std::runtime_error(
-          "Файл выплат изменён извне; запись заблокирована до перезапуска");
-    }
     QJsonArray rows;
     QSet<QString> ids, keys;
     double total = 0;
@@ -366,16 +352,13 @@ bool PortfolioDividendsController::save(const QList<QVariantMap> &candidate) {
         QJsonDocument(QJsonObject{{"version", 1}, {"receipts", rows}}).toJson();
     if (bytes.size() > 2 * 1024 * 1024)
       throw std::runtime_error("Слишком много выплат");
-    storage::atomic_write(market_->dataRoot() /
-                              "portfolio_dividend_receipts_v1.json",
-                          bytes.toStdString());
-    persisted_hash_ =
-        QCryptographicHash::hash(bytes, QCryptographicHash::Sha256);
+    file_->write(bytes.toStdString());
     saved_ = candidate;
     error_.clear();
     rebuild();
     return true;
   } catch (const std::exception &e) {
+    if(dynamic_cast<const FileConflict*>(&e))valid_=false;
     error_ = q(e.what());
     if(!valid_)rebuild();else emit changed();
     return false;
@@ -424,7 +407,7 @@ bool PortfolioDividendsController::confirm(QString key, QString paymentDate,
        {"ticker", q(c.ticker)},
        {"recordDate", q(c.event.record_date)},
        {"cutoff",
-        q(*dividend_last_buy(c.event.record_date, moex_calendar_2026()))},
+        q(*dividend_last_buy(c.event.record_date, trading_calendar_for(c.event.record_date)))},
        {"period", q(c.event.period)},
        {"status", 3.0},
        {"verification", 1.0},

@@ -7,7 +7,7 @@ ColumnLayout {
     required property var dividends
     readonly property var income: { const snapshot=controller.totals; return controller.incomeWithDividends(Number(dividends.totals.receivedNet || 0),dividends.totals.valid===true) }
     Layout.fillWidth: true
-    Connections { target: root.controller; function onChanged() { if(!cashInput.activeFocus) cashInput.text=root.controller.totals.cashRaw } }
+    Connections { target: root.controller; function onPortfolioChanged() { if(!cashInput.activeFocus) cashInput.text=root.controller.totals.cashRaw } }
     spacing: 12
     GridLayout {
         Layout.fillWidth: true

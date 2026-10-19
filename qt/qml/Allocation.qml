@@ -24,7 +24,7 @@ Surface {
                         ctx.beginPath(); ctx.arc(104,104,80,angle,next); ctx.stroke(); angle=next
                     }
                 }
-                Connections { target: root.controller; function onChanged() { ring.requestPaint() } }
+                Connections { target: root.controller; function onPortfolioChanged() { ring.requestPaint() } }
                 Connections { target: Theme; function onDarkChanged() { ring.requestPaint() } }
             }
             Text { anchors.centerIn: parent; width: 128; height: 40; text: root.controller.allocation.length ? root.controller.totals.value : "Нет оценки"; fontSizeMode: Text.Fit; minimumPixelSize: 10; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter; color: Theme.text; font.family: Theme.family; font.pixelSize: 18; font.weight: Font.DemiBold }
