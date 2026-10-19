@@ -10,7 +10,7 @@ ApplicationWindow {
     width: Math.min(1440, Screen.desktopAvailableWidth)
     height: Math.min(920, Screen.desktopAvailableHeight)
     minimumWidth: 640; minimumHeight: 480
-    title: "MOEXWatch 0.8.1 · Qt"
+    title: "MOEXWatch 0.8.2 · Qt"
     font.family: Theme.family
     font.pixelSize: 14
     color: Theme.canvas
@@ -81,7 +81,7 @@ ApplicationWindow {
                     }
                 }
                 ActionButton { text: window.compact ? "◐" : Theme.dark ? "Светлая тема" : "Тёмная тема"; Accessible.name: Theme.dark ? "Включить светлую тему" : "Включить тёмную тему"; Layout.fillWidth: true; implicitWidth: 40; onClicked: backend.dark=!backend.dark }
-                Text { visible: !window.compact; text: "MOEXWatch 0.8.1\nC++ · Qt Quick"; color: Theme.muted; font.pixelSize: 12; lineHeight: 1.5; Layout.topMargin: 8 }
+                Text { visible: !window.compact; text: "MOEXWatch 0.8.2\nC++ · Qt Quick"; color: Theme.muted; font.pixelSize: 12; lineHeight: 1.5; Layout.topMargin: 8 }
             }
         }
         ColumnLayout {
