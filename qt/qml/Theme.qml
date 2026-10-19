@@ -14,7 +14,10 @@ QtObject {
     readonly property color positive: dark ? "#56c979" : "#147741"
     readonly property color negative: dark ? "#ff6975" : "#bc2a3b"
     readonly property color warning: dark ? "#f2af49" : "#9b5c00"
-    readonly property var chartColors: [positive, "#3e91f5", "#ad80ec", warning, muted]
+    // Light-theme chart strokes meet the 3:1 non-text contrast threshold.
+    readonly property color chartBlue: dark ? "#3e91f5" : "#1976d2"
+    readonly property color chartPurple: dark ? "#ad80ec" : "#7650ad"
+    readonly property var chartColors: [positive, chartBlue, chartPurple, warning, muted]
     readonly property int radius: 12
     readonly property int gap: 16
     readonly property string family: Qt.platform.os === "windows" ? "Segoe UI" : "DejaVu Sans"

@@ -71,7 +71,7 @@ ApplicationWindow {
                         id: nav
                         required property int index
                         required property var modelData
-                        width: navigation.width; height: 40
+                        width: navigation.width; height: 44
                         Accessible.name: modelData.name
                         onClicked: window.pageIndex=index
                         ToolTip.visible: hovered && window.compact
