@@ -18,17 +18,17 @@ Dialog {
         ColumnLayout {
             width: editorScroll.availableWidth; spacing: 8
             Label { text: "Дата · ГГГГ-ММ-ДД" }
-            TextField { id: date; objectName: "operationDate"; text: Qt.formatDate(new Date(),"yyyy-MM-dd"); Layout.fillWidth: true; Accessible.name: "Дата операции" }
+            TextField { id: date; objectName: "operationDate"; text: Qt.formatDate(new Date(),"yyyy-MM-dd"); Layout.fillWidth: true; Accessible.name: "Дата операции"; onTextEdited: dialog.controller.clearError() }
             Label { text: "Тикер" }
-            TextField { id: ticker; objectName: "operationTicker"; placeholderText: "SBER"; Layout.fillWidth: true; maximumLength: 32; Accessible.name: "Тикер" }
+            TextField { id: ticker; objectName: "operationTicker"; placeholderText: "SBER"; Layout.fillWidth: true; maximumLength: 32; Accessible.name: "Тикер"; onTextEdited: dialog.controller.clearError() }
             Label { text: "Операция" }
-            ComboBox { id: side; model: ["Покупка","Продажа"]; Layout.fillWidth: true; Accessible.name: "Сторона операции" }
+            ComboBox { id: side; model: ["Покупка","Продажа"]; Layout.fillWidth: true; Accessible.name: "Сторона операции"; onActivated: dialog.controller.clearError() }
             Label { text: "Количество акций" }
-            TextField { id: quantity; objectName: "operationQuantity"; placeholderText: "10"; Layout.fillWidth: true; Accessible.name: "Количество акций" }
+            TextField { id: quantity; objectName: "operationQuantity"; placeholderText: "10"; Layout.fillWidth: true; Accessible.name: "Количество акций"; onTextEdited: dialog.controller.clearError() }
             Label { text: "Цена за акцию, ₽" }
-            TextField { id: price; objectName: "operationPrice"; placeholderText: "100,00"; Layout.fillWidth: true; Accessible.name: "Цена покупки или продажи" }
+            TextField { id: price; objectName: "operationPrice"; placeholderText: "100,00"; Layout.fillWidth: true; Accessible.name: "Цена покупки или продажи"; onTextEdited: dialog.controller.clearError() }
             Label { text: "Комиссия за операцию, ₽" }
-            TextField { id: fee; text: "0"; Layout.fillWidth: true; Accessible.name: "Комиссия" }
+            TextField { id: fee; text: "0"; Layout.fillWidth: true; Accessible.name: "Комиссия"; onTextEdited: dialog.controller.clearError() }
             Label { text: dialog.controller.error; visible: text.length > 0; color: Theme.negative; wrapMode: Text.WordWrap; Layout.fillWidth: true }
         }
     }

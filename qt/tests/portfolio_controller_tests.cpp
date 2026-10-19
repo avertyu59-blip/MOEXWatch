@@ -24,6 +24,16 @@ private slots:
         QVERIFY(!c.commitImportedTransactions(snapshot.transactions,revision));QCOMPARE(c.journalSnapshot().transactions.front().price,100.0);
         QVERIFY(!c.commitImportedTransactions({},revision));
     }
+    void operationFormAcceptsRussianDecimalAndExplainsInvalidField() {
+        QTemporaryDir dir;
+        PortfolioController c(dir.path().toStdString());
+        QVERIFY(!c.addOperation("2026/10/19", "SBER", 0, "10", "100,00", "5"));
+        QVERIFY(c.error().contains("дату"));
+        QVERIFY(!c.addOperation("2026-10-19", "SBER", 0, "10", "цена", "5"));
+        QVERIFY(c.error().contains("цену"));
+        QVERIFY(c.addOperation("2026-10-19", "SBER", 0, "10", "100,00", "5"));
+        QCOMPARE(c.operations()->rowCount(), 1);
+    }
     void closedJournalTickerSelectionSurvivesRebuildAndRestart() {
         QTemporaryDir dir;const auto root=std::filesystem::path(dir.path().toStdString());
         {PortfolioController c(root);QVERIFY(c.addOperation("2026-01-01","DUMMYQ",0,"1","100","0"));QVERIFY(c.addOperation("2026-01-02","DUMMYQ",1,"1","110","0"));}

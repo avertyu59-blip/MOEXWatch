@@ -237,9 +237,19 @@ bool PortfolioController::addOperation(QString date, QString ticker, int side, Q
     date = date.trimmed();
     const auto q = parse(quantity), p = parse(price),
                f = fee.trimmed().isEmpty() ? std::optional<double>{0} : parse(fee);
-    if (side < 0 || side > 1 || !q || !p || !f ||
-        QDate::fromString(date, Qt::ISODate).toString(Qt::ISODate) != date) {
-        fail("Проверьте дату ГГГГ-ММ-ДД, сторону и числовые значения.");
+    QStringList invalid;
+    if (QDate::fromString(date, Qt::ISODate).toString(Qt::ISODate) != date)
+        invalid.push_back("дату в формате ГГГГ-ММ-ДД");
+    if (side < 0 || side > 1)
+        invalid.push_back("сторону операции");
+    if (!q)
+        invalid.push_back("количество акций");
+    if (!p)
+        invalid.push_back("цену за акцию");
+    if (!f)
+        invalid.push_back("комиссию");
+    if (!invalid.isEmpty()) {
+        fail("Проверьте: " + invalid.join(", ") + ".");
         return false;
     }
     PortfolioTransaction operation{date.toStdString(),
