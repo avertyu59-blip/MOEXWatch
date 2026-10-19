@@ -2,6 +2,7 @@
 #ifdef _WIN32
 #include <QDir>
 #include <QProcess>
+#include <utility>
 // NTFS junctions do not require Developer Mode or symbolic-link privileges.
 class TestJunction {
 public:
